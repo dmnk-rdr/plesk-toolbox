@@ -115,3 +115,30 @@ _plesk_sieve_path() {
     local d="$1" user="$2"
     printf '/var/qmail/mailnames/%s/%s/sieve/.dovecot.sieve\n' "$d" "$user"
 }
+
+# All IPs Plesk knows about — authoritative source for "this server's IPs".
+# Cached. Output: one IP per line (both v4 and v6).
+_PLESK_SERVER_IPS_CACHE=""
+_plesk_server_ips() {
+    if [[ -z "$_PLESK_SERVER_IPS_CACHE" ]]; then
+        local raw=""
+        if _plesk_available; then
+            raw="$(plesk db -Ne "SELECT ip_address FROM IP_Addresses;" 2>/dev/null)"
+        fi
+        # Fallback: routing-based discovery if DB query came up empty.
+        if [[ -z "$raw" ]]; then
+            local v4 v6
+            v4="$(ip -4 -o route get 1.1.1.1 2>/dev/null | awk '/src/ {for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}')"
+            v6="$(ip -6 -o route get 2606:4700:4700::1111 2>/dev/null | awk '/src/ {for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}')"
+            raw="$(printf '%s\n%s\n' "$v4" "$v6")"
+        fi
+        _PLESK_SERVER_IPS_CACHE="$(printf '%s\n' "$raw" | awk 'NF')"
+    fi
+    [[ -n "$_PLESK_SERVER_IPS_CACHE" ]] && printf '%s\n' "$_PLESK_SERVER_IPS_CACHE"
+}
+
+# Path to a domain's local DKIM private key (Plesk Obsidian layout).
+_plesk_dkim_key_path() {
+    local d="$1" sel="${2:-default}"
+    printf '/etc/domainkeys/%s/%s\n' "$d" "$sel"
+}

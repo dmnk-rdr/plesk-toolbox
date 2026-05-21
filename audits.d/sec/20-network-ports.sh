@@ -1,7 +1,7 @@
 # audits.d/sec/20-network-ports.sh - externally-bound listening ports
 section "security: listening ports"
 
-: "${EXPECTED_PORTS:=21 22 25 53 80 443 465 587 993 995 4643 8443 8447}"
+: "${EXPECTED_PORTS:=21 22 25 53 80 110 143 443 465 587 993 995 4190 4643 8443 8447 8880}"
 
 if ! command -v ss >/dev/null 2>&1; then
     emit "sec.network.listening_ports" "medium" "skip" "ss(8) not available"

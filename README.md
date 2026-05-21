@@ -81,9 +81,18 @@ web-only servers.
 - `14-system-memory` — cgroup-aware memory + sw-engine RSS
 - `16-system-disk` — per-mountpoint usage + inode pressure
 - `18-system-services` — nginx/apache/mariadb/postfix/dovecot/sw-cp-server/psa
-- `40-plesk-license` — status and expiry
-- `42-mail-hygiene` — per **mail-enabled** domain: SPF/DKIM/DMARC with
-  dynamic selector resolution; Null-MX domains (RFC 7505) skipped cleanly
+- `40-plesk-license` — license validity (`plesk bin license -c`), edition,
+  expiry days from `keyinfo --list`
+- `42-mail-spf` — per mail-enabled domain: record uniqueness, server-IP
+  coverage (Plesk-DB-authoritative IPs evaluated against `ip4:`/`ip6:`/
+  `+a`/`+mx`), all-qualifier strength, lookup count vs RFC 7208 limit,
+  deprecated `ptr` mechanism
+- `43-mail-dkim` — per mail-enabled domain: local key bit length,
+  DNS↔local-key byte equality (catches "Plesk rotated, DNS stale"),
+  empty `p=` (revoked), `t=y` testing flag, selector autodiscovery
+- `44-mail-dmarc` — per mail-enabled domain: policy strength
+  (`none` < `quarantine` < `reject`), `rua=` reporting target, `pct=`
+  rollout phase, strict alignment flags, multiple-record check
 - `46-mail-mailboxes` — per mail-enabled domain: mailbox count + sieve
   sanity (detects Plesk's `fileinto "INBOX"` bug + wrong owner)
 

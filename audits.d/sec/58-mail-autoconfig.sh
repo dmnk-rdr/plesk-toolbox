@@ -75,9 +75,14 @@ for d in "${domains[@]}"; do
             emit "sec.mail.autoconfig.${d}" "$sev_status" "$verdict" \
                 "${d}: autoconfig via .well-known (HTTP ${code})" "$fix"
         else
-            emit "sec.mail.autoconfig.${d}" "medium" "warn" \
-                "${d}: no autoconfig (no DNS, no .well-known)" \
-                "publish autoconfig.${d} or .well-known/autoconfig on ${d}"
+            if (( MAIL_AUTOCONFIG_REQUIRE_HOST == 1 )); then
+                emit "sec.mail.autoconfig.${d}" "medium" "warn" \
+                    "${d}: no autoconfig (no DNS, no .well-known)" \
+                    "publish autoconfig.${d} or .well-known/autoconfig on ${d}"
+            else
+                emit "sec.mail.autoconfig.${d}" "info" "skip" \
+                    "${d}: no autoconfig configured (optional)"
+            fi
         fi
     fi
 
@@ -106,8 +111,13 @@ for d in "${domains[@]}"; do
         emit "sec.mail.autodiscover.${d}" "info" "pass" \
             "${d}: autodiscover via SRV (${srv})"
     else
-        emit "sec.mail.autodiscover.${d}" "low" "warn" \
-            "${d}: no autodiscover (no host, no SRV)" \
-            "publish autodiscover.${d} A/AAAA or _autodiscover._tcp.${d} SRV"
+        if (( MAIL_AUTOCONFIG_REQUIRE_HOST == 1 )); then
+            emit "sec.mail.autodiscover.${d}" "low" "warn" \
+                "${d}: no autodiscover (no host, no SRV)" \
+                "publish autodiscover.${d} A/AAAA or _autodiscover._tcp.${d} SRV"
+        else
+            emit "sec.mail.autodiscover.${d}" "info" "skip" \
+                "${d}: no autodiscover configured (optional)"
+        fi
     fi
 done

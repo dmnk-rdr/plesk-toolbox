@@ -104,14 +104,16 @@ label_line() {
     printf '  %s%-14s%s %s\n' "$C_DIM" "$label" "$C_RST" "$value"
 }
 
-# Human-readable bytes (KB/MB/GB)
+# Human-readable bytes (KB/MB/GB), one decimal. Pure bash — no bc dependency.
 hr_bytes() {
-    local b="${1:-0}"
-    if   (( b >= 1073741824 )); then printf '%.1fG' "$(echo "$b/1073741824" | bc -l)"
-    elif (( b >= 1048576 ));    then printf '%.1fM' "$(echo "$b/1048576"    | bc -l)"
-    elif (( b >= 1024 ));       then printf '%.1fK' "$(echo "$b/1024"       | bc -l)"
-    else                              printf '%dB' "$b"
+    local b="${1:-0}" div unit
+    if   (( b >= 1073741824 )); then div=1073741824; unit=G
+    elif (( b >= 1048576 ));    then div=1048576;    unit=M
+    elif (( b >= 1024 ));       then div=1024;       unit=K
+    else                              printf '%dB' "$b"; return
     fi
+    # Integer maths: whole.tenths
+    printf '%d.%d%s' "$(( b / div ))" "$(( (b * 10 / div) % 10 ))" "$unit"
 }
 
 # Progress bar for resource usage

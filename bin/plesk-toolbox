@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 # plesk-toolbox - subcommand dispatcher entrypoint
-set -euo pipefail
+#
+# Deliberately no `set -e` / `pipefail`: this script sources arbitrary audit
+# files from audits.d/, and patterns like `awk '... exit'` trigger SIGPIPE on
+# upstream commands. Audit files report results via emit() and do not rely on
+# exit codes — making the dispatcher itself errexit-aware would mean every
+# transient failure in a check kills the whole run silently.
+set -u
 
 PTBOX_ROOT="${PTBOX_ROOT:-/opt/plesk-toolbox}"
-PTBOX_VERSION="0.4.0"
-export PTBOX_ROOT PTBOX_VERSION
+export PTBOX_ROOT
 
 # Dev-mode: when running from source tree (not installed), use that root
 if [[ ! -d "${PTBOX_ROOT}/lib" ]]; then

@@ -26,7 +26,11 @@ run_audit_dir() {
 }
 
 # run_audit_profile <profile>
-# Profile shorthand: sec, health, sec/network, health/mail, etc.
+# Profile shorthand:
+#   (empty)        — full audit (sec + health)
+#   sec | health   — that pillar only
+#   sec/<group>    — group within a pillar (filters NN-<group>-*.sh)
+#   <group>        — group across all pillars (e.g. "mail" → sec/mail + health/mail)
 run_audit_profile() {
     local profile="${1:-}"
     local base="${PTBOX_ROOT}/audits.d"
@@ -35,14 +39,23 @@ run_audit_profile() {
         run_audit_dir "${base}/health"
         return
     }
-    # Pillar with optional group filter: sec, sec/network
     local pillar="${profile%%/*}"
     local group="${profile#*/}"
     [[ "$pillar" == "$group" ]] && group=""
+
+    # Cross-pillar group shorthand: any bare token that isn't sec|health.
+    if [[ -z "$group" && "$pillar" != "sec" && "$pillar" != "health" ]]; then
+        local p
+        for p in sec health; do
+            [[ -d "${base}/${p}" ]] || continue
+            run_audit_dir "${base}/${p}" "*-${pillar}-*.sh"
+        done
+        return
+    fi
+
     if [[ -z "$group" ]]; then
         run_audit_dir "${base}/${pillar}"
     else
-        # Group filter: NN-<group>-*.sh
         run_audit_dir "${base}/${pillar}" "*-${group}-*.sh"
     fi
 }

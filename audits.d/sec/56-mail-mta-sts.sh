@@ -9,10 +9,11 @@ section "security: MTA-STS / TLSRPT"
 : "${MAIL_TLSRPT_REQUIRED:=0}"
 
 # Severity for "absent" cases — depends on whether ops considers STS mandatory.
+# Absent + not required → skip (truer than "pass" because we couldn't really test).
 _absent_sev() { (( MAIL_MTA_STS_REQUIRED == 1 )) && printf 'medium' || printf 'info'; }
-_absent_st()  { (( MAIL_MTA_STS_REQUIRED == 1 )) && printf 'warn'   || printf 'pass'; }
+_absent_st()  { (( MAIL_MTA_STS_REQUIRED == 1 )) && printf 'warn'   || printf 'skip'; }
 _tlsrpt_sev() { (( MAIL_TLSRPT_REQUIRED  == 1 )) && printf 'medium' || printf 'info'; }
-_tlsrpt_st()  { (( MAIL_TLSRPT_REQUIRED  == 1 )) && printf 'warn'   || printf 'pass'; }
+_tlsrpt_st()  { (( MAIL_TLSRPT_REQUIRED  == 1 )) && printf 'warn'   || printf 'skip'; }
 
 if ! _plesk_available; then
     emit "sec.mail.mta_sts" "medium" "skip" "plesk CLI not available"

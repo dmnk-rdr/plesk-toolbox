@@ -3,7 +3,6 @@
 __PTBOX_DISPATCH_LOADED=1
 
 : "${PTBOX_ROOT:=/opt/plesk-toolbox}"
-: "${PTBOX_VERSION:=dev}"
 : "${JSON_OUTPUT:=0}"
 : "${DRY_RUN:=0}"
 : "${ASSUME_YES:=0}"
@@ -22,10 +21,17 @@ dispatch_usage() {
 plesk-toolbox - Plesk server daily-ops toolbox
 
 usage:
-  plesk-toolbox audit  [sec|health|sec/<group>|health/<group>] [--json] [--list]
+  plesk-toolbox audit  [sec|health|<group>|<pillar>/<group>] [--json] [--list]
   plesk-toolbox tool   <group>/<name> [args...] [--dry-run] [--yes]
   plesk-toolbox mod    list | status <name> | enable <name> | disable <name>
   plesk-toolbox help   [topic]
+
+audit profile examples:
+  audit               full audit (sec + health)
+  audit sec           security pillar only
+  audit mail          all mail-related checks across pillars
+  audit sec/mail      mail checks under sec/ only
+  audit health/mail   mail checks under health/ only
 
 global flags:
   --json        machine-readable output (audit only)
@@ -73,7 +79,7 @@ dispatch_audit() {
     fi
     local start=$(date +%s)
     if [[ "$JSON_OUTPUT" -eq 1 ]]; then
-        printf '{"version":"%s","results":[' "$PTBOX_VERSION"
+        printf '{"results":['
     else
         section "plesk-toolbox audit ${profile:-all}"
     fi
@@ -176,7 +182,6 @@ dispatch_main() {
         tool)     dispatch_tool "$@" ;;
         mod)      dispatch_mod "$@" ;;
         help|-h|--help|"") dispatch_usage ;;
-        version|--version) printf 'plesk-toolbox %s\n' "$PTBOX_VERSION" ;;
         *)        printf 'unknown command: %s\n' "$pillar" >&2; dispatch_usage; return 2 ;;
     esac
 }

@@ -3,8 +3,8 @@ _plesk_toolbox() {
     local cur prev words cword
     _init_completion || return
 
-    local verbs="audit tool mod help version"
-    local audit_profiles="sec health sec/network sec/system sec/plesk sec/web health/system health/mail health/plesk"
+    local verbs="audit tool mod help"
+    local audit_profiles="sec health mail sec/mail sec/network sec/system sec/plesk sec/web health/mail health/system health/plesk"
     local mod_sub="list status enable disable"
 
     if (( cword == 1 )); then

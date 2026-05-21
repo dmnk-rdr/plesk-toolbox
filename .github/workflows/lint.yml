@@ -29,6 +29,8 @@ jobs:
           #   SC1090/SC1091 — sourced libs, paths resolve at runtime
           #   SC2154        — vars set by sourced libs (PTBOX_ROOT etc.)
           #   SC2034/SC2155 — pre-existing patterns in lib/common.sh
+          #   SC2002        — "useless cat" is a style nit; the cat | paste
+          #                   pattern preserves a 2>/dev/null on missing files
           find bin lib audits.d tools.d mods.d -type f \
                \( -name '*.sh' -o -path 'bin/*' \) -print0 \
-            | xargs -0 shellcheck -s bash -e SC1090,SC1091,SC2154,SC2034,SC2155
+            | xargs -0 shellcheck -s bash -e SC1090,SC1091,SC2154,SC2002,SC2034,SC2155

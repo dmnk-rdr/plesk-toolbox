@@ -14,7 +14,7 @@
 ## Checklist
 
 - [ ] `bash -n` passes on every changed `*.sh`
-- [ ] `shellcheck -s bash` passes on every changed file (project exclusions: `SC1090,SC1091,SC2154,SC2034,SC2155`)
+- [ ] `shellcheck -s bash` passes on every changed file (project exclusions: `SC1090,SC1091,SC2154,SC2002,SC2034,SC2155`)
 - [ ] Tested on a real Plesk Obsidian server when the change is non-trivial
 - [ ] No personal server names, hostnames, IPs, or domains in the diff
 - [ ] New audit files use `emit <id> <severity> <status> <message> [fix]` and stay read-only

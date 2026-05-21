@@ -1,0 +1,25 @@
+name: Feature request
+description: A new check, tool, mod, or capability you'd find useful.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Use case
+      description: What problem on a Plesk server would this address? Be concrete — "I want to detect X because last week Y happened" beats abstract wish-listing.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+      description: How the new check/tool/mod should behave. Name + audit file path + emit IDs if you've already thought about it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Existing tools/checks that get close but don't quite fit, and why.

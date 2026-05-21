@@ -1,0 +1,37 @@
+name: Wrong or missing audit finding
+description: A specific audit produced the wrong verdict, or a check is missing that you would expect.
+labels: ["audit"]
+body:
+  - type: input
+    id: audit_id
+    attributes:
+      label: Audit ID
+      description: The dotted ID from the emit line (e.g. `sec.mail.tls.example.com.smtp` or `health.mail.spf.example.com.coverage`). Use the audit file name if this is a "missing check" report.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind of issue
+      options:
+        - False positive (warned/failed when it shouldn't)
+        - False negative (passed but the situation was bad)
+        - Missing check (something we should detect but don't)
+        - Misleading message / fix hint
+    validations:
+      required: true
+
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: What the audit reported, what the real situation is, and why the current verdict is wrong (or what a new check should look for). DNS records, openssl output, plesk db output are all helpful — strip personal data.
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested fix
+      description: Optional. If you already see how to fix it (e.g. "extend EXPECTED_PORTS default with 4190"), say so.

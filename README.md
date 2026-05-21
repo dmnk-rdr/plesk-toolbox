@@ -23,6 +23,14 @@ The installer:
 - Writes `/etc/plesk-toolbox.conf` from the example if missing
 - Enables the `motd` mod (branded SSH login dashboard)
 
+Update:
+
+```bash
+cd plesk-toolbox
+git pull
+sudo ./install.sh        # idempotent — syncs the new tree to /opt/plesk-toolbox/
+```
+
 Uninstall:
 
 ```bash

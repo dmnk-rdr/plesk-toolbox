@@ -44,10 +44,17 @@ fi
 
 echo "→ installing plesk-toolbox to ${PREFIX}"
 mkdir -p "$PREFIX"
-# Copy all tree components that exist
+# Sync tree components. rsync handles re-installs cleanly (removes deleted
+# files); plain cp -a would nest dirs on second run. Falls back to a
+# rm-rf-then-cp sequence if rsync isn't available.
 for d in bin lib audits.d tools.d mods.d share; do
     [[ -d "${SRC_DIR}/${d}" ]] || continue
-    cp -a "${SRC_DIR}/${d}" "$PREFIX/"
+    if command -v rsync >/dev/null 2>&1; then
+        rsync -a --delete "${SRC_DIR}/${d}/" "${PREFIX}/${d}/"
+    else
+        rm -rf "${PREFIX:?}/${d}"
+        cp -a "${SRC_DIR}/${d}" "$PREFIX/"
+    fi
 done
 [[ -f "${SRC_DIR}/plesk-toolbox.conf.example" ]] && \
     cp "${SRC_DIR}/plesk-toolbox.conf.example" "$PREFIX/"

@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# plesk-toolbox - subcommand dispatcher entrypoint
+set -euo pipefail
+
+PTBOX_ROOT="${PTBOX_ROOT:-/opt/plesk-toolbox}"
+PTBOX_VERSION="0.4.0"
+export PTBOX_ROOT PTBOX_VERSION
+
+# Dev-mode: when running from source tree (not installed), use that root
+if [[ ! -d "${PTBOX_ROOT}/lib" ]]; then
+    _self="$(readlink -f "${BASH_SOURCE[0]}")"
+    PTBOX_ROOT="$(cd "$(dirname "$_self")/.." && pwd)"
+    export PTBOX_ROOT
+fi
+
+# shellcheck source=../lib/dispatch.sh
+. "${PTBOX_ROOT}/lib/dispatch.sh"
+
+dispatch_main "$@"

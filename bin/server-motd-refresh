@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# server-motd-refresh - prerender slow MOTD sections into cache
+# Called by the systemd timer (server-motd-refresh.timer) every 10 minutes.
+# Sections that want caching source lib/common.sh and write to ${CACHE_DIR}/<name>.
+set -eu
+
+PTBOX_ROOT="${PTBOX_ROOT:-/opt/plesk-toolbox}"
+CACHE_DIR="${MOTD_CACHE_DIR:-/var/cache/server-motd}"
+mkdir -p "$CACHE_DIR"
+
+# shellcheck source=../lib/common.sh
+. "${PTBOX_ROOT}/lib/common.sh"
+_load_config 2>/dev/null || true
+export CACHE_DIR PTBOX_ROOT
+
+sections_dir="${PTBOX_ROOT}/mods.d/motd/sections"
+[[ -d "$sections_dir" ]] || exit 0
+
+# Cached data: updates count, fail2ban recent bans, last logins
+# Refresh files that downstream MOTD sections read.
+
+# pending updates
+if command -v apt-get >/dev/null 2>&1; then
+    apt-get -s -o Debug::NoLocking=true upgrade 2>/dev/null \
+        | awk '/^Inst/ {c++} END {print c+0}' > "${CACHE_DIR}/updates.count" || echo 0 > "${CACHE_DIR}/updates.count"
+elif command -v dnf >/dev/null 2>&1; then
+    dnf -q check-update 2>/dev/null | awk 'NF>=3 {c++} END {print c+0}' > "${CACHE_DIR}/updates.count" || echo 0 > "${CACHE_DIR}/updates.count"
+else
+    echo 0 > "${CACHE_DIR}/updates.count"
+fi
+
+# recent fail2ban bans (last 24h)
+if command -v fail2ban-client >/dev/null 2>&1; then
+    fail2ban-client status 2>/dev/null \
+        | awk -F: '/Jail list/ {gsub(/[ \t]/,"",$2); print $2}' \
+        | tr ',' '\n' > "${CACHE_DIR}/f2b.jails" || true
+else
+    : > "${CACHE_DIR}/f2b.jails"
+fi
+
+# last logins snapshot
+last -n 5 -F 2>/dev/null | head -5 > "${CACHE_DIR}/last.txt" || : > "${CACHE_DIR}/last.txt"
+
+# public IP (optional, cached so interactive logins stay instant)
+if [[ "${MOTD_FETCH_PUBLIC_IP:-1}" -eq 1 ]] && command -v curl >/dev/null 2>&1; then
+    curl -s --max-time 3 https://api.ipify.org > "${CACHE_DIR}/public_ip" 2>/dev/null || : > "${CACHE_DIR}/public_ip"
+fi
+
+touch "${CACHE_DIR}/.refreshed"

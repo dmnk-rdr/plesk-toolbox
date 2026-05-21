@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh server-motd cache every 10 minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=10min
+Unit=server-motd-refresh.service
+
+[Install]
+WantedBy=timers.target

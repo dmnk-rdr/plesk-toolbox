@@ -1,0 +1,76 @@
+# /etc/plesk-toolbox.conf — example configuration
+# Shell-sourced by runners. Comment or uncomment as needed.
+
+# ─── General ────────────────────────────────────────────────────────────
+# Path to testssl.sh for deep TLS audits (optional, falls back to openssl).
+# TESTSSL_BIN=/opt/testssl/testssl.sh
+
+# Domains to skip in per-domain checks (space-separated)
+# IGNORE_DOMAINS="legacy.example.com dev.example.com"
+
+# Log directory for audit/tool/mod events
+# LOG_DIR=/var/log/plesk-toolbox
+
+# ─── Audit: network ─────────────────────────────────────────────────────
+# Override the allowed externally-bound port whitelist.
+# EXPECTED_PORTS="21 22 25 53 80 443 465 587 993 995 4643 8443 8447 10000"
+
+# ─── Audit: memory ──────────────────────────────────────────────────────
+# MEM_WARN_PCT=85
+# MEM_FAIL_PCT=95
+
+# ─── Audit: disk ────────────────────────────────────────────────────────
+# DISK_WARN_PCT=80
+# DISK_FAIL_PCT=92
+
+# ─── Audit: services ────────────────────────────────────────────────────
+# Services checked by health/18-system-services.sh
+# CRITICAL_SERVICES="nginx apache2 mariadb postfix dovecot sw-cp-server psa"
+
+# ─── Audit: mail hygiene ────────────────────────────────────────────────
+# Max domains to scan for SPF/DKIM/DMARC (saves DNS lookups on large servers).
+# MAIL_HYGIENE_MAX_DOMAINS=50
+# Leave empty for auto-detect via `plesk bin dkim --info <domain>`
+# DKIM_SELECTOR=
+# Null-MX domains (RFC 7505, "0 .") get an info pass instead of SPF/DMARC warns.
+# MAIL_HYGIENE_NULL_MX_INFO=1
+
+# ─── Audit: mail TLS (mail.<d>:25/465/587/993/995) ──────────────────────
+# MAIL_TLS_MAX_DOMAINS=25
+# MAIL_TLS_PORTS="25 465 587 993 995"           # plain 143/110 default off
+
+# ─── Audit: MTA-STS / TLSRPT ────────────────────────────────────────────
+# MAIL_MTA_STS_MAX_DOMAINS=50
+# MAIL_MTA_STS_REQUIRED=0                        # 1 = warn when missing
+# MAIL_TLSRPT_REQUIRED=0
+
+# ─── Audit: mail client autoconfig / autodiscover ───────────────────────
+# MAIL_AUTOCONFIG_MAX_DOMAINS=50
+# MAIL_AUTOCONFIG_REQUIRE_HOST=0                 # 0 = .well-known acceptable
+# MAIL_AUTOCONFIG_TIMEOUT=6
+
+# ─── Audit: mailbox inventory + sieve sanity ────────────────────────────
+# MAIL_MAILBOX_MAX_DOMAINS=50
+# MAIL_SIEVE_CHECK=1                             # detect fileinto "INBOX" bug
+
+# ─── Audit: web TLS ─────────────────────────────────────────────────────
+# WEB_TLS_MAX_DOMAINS=25
+
+# ─── Severity overrides ─────────────────────────────────────────────────
+# Format: SEVERITY_OVERRIDE_<check_id_with_dots_as_underscores>="<severity>"
+# Setting to "info" also downgrades fail → warn (i.e. "I accept this risk").
+# Example: we deliberately run SSH on port 22.
+# SEVERITY_OVERRIDE_sec_system_ssh_port="info"
+# Example: we don't want fail2ban on this host.
+# SEVERITY_OVERRIDE_sec_plesk_panel_fail2ban="info"
+
+# ─── Tools / fixes ──────────────────────────────────────────────────────
+# Interactive confirmation defaults on. Set to 0 to require explicit --yes
+# for every tool_confirm() prompt even on a TTY.
+# TOOL_CONFIRM_DEFAULT=1
+
+# ─── MOTD mod ───────────────────────────────────────────────────────────
+# MOTD_BRAND="Acme Hosting · Managed Server"
+# MOTD_SERVICES=(nginx apache2 mariadb postfix dovecot fail2ban sw-cp-server psa)
+# MOTD_FETCH_PUBLIC_IP=1           # 0 for air-gapped servers
+# MOTD_CACHE_DIR=/var/cache/server-motd

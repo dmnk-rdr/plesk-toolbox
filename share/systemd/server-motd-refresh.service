@@ -1,0 +1,9 @@
+[Unit]
+Description=Refresh server-motd cache
+Documentation=https://github.com/dmnk-rdr/plesk-toolbox
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/server-motd-refresh
+Nice=10
+IOSchedulingClass=idle

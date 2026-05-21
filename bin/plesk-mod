@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# plesk-mod - shim → plesk-toolbox mod
+exec /usr/local/bin/plesk-toolbox mod "$@"

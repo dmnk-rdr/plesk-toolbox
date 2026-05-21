@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# plesk-audit - legacy shim → plesk-toolbox audit
+exec /usr/local/bin/plesk-toolbox audit "$@"

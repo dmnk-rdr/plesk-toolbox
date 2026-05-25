@@ -24,18 +24,25 @@ what it changed** (everything writes a JSONL audit log).
 ## ✨ Highlights
 
 - 🛡️ **Security audit** — SSH hardening, fail2ban, panel 2FA, exposed ports,
-  TLS expiry on every domain, the 9 OWASP HTTP response headers, MTA-STS,
-  mail-client autoconfig, …
-- 💚 **Health audit** — memory/disk pressure, critical services, Plesk
-  license expiry, consolidated mail hygiene (SPF + DKIM + DMARC + mailbox
-  sieve sanity) per domain in a single coloured table
+  TLS expiry on every domain, the 9 OWASP HTTP response headers (skipping
+  vhosts that still serve Plesk's "Domain Default page"), MTA-STS,
+  mail-client autoconfig + autodiscover, webmail reachability …
+- 💚 **Health audit** — memory/disk pressure, critical services
+  (auto-aliases `apache2`↔`httpd`/`mariadb`↔`mysql`), Plesk license expiry,
+  consolidated mail hygiene (SPF + DKIM + DMARC + mailbox sieve sanity)
+  per domain in a single coloured table — with a **details:** block under
+  every table listing exactly which mailbox / setting tripped each ⚠/✗
 - 🔧 **Operator tools** — flush the mail queue, tail one domain's maillog,
   reissue a Let's Encrypt cert with `www`, hunt top spam senders, dump slow
-  MySQL queries — all logged, all reversible where it matters
+  MySQL queries, **rotate weak/stale DKIM keys with zero signing-gap** — all
+  logged, all reversible where it matters
 - 🎨 **MOTD mod** — replace the noisy default SSH login banner with a clean
   branded dashboard (services, mem/disk bars, recent logins, pending updates)
 - 📋 **Structured output** — human-readable tables on a TTY, `--json` for
   Prometheus exporters, log shippers, or your favourite IRC bot
+- ❓ **`--help` on every layer** — `plesk-toolbox --help`, `… audit --help`,
+  `… tool --help`, **`… tool mail/dkim-rotate --help`** — drill down as far
+  as you need
 - 🪶 **Zero runtime deps** — stock `bash`, `coreutils`, `openssl`,
   `systemctl`. No Python, no Ruby, no agents.
 
@@ -47,15 +54,33 @@ what it changed** (everything writes a JSONL audit log).
   ──────────────  ──────  ────────  ────────  ─────────
   example.com     ✓ -all  ✓ 2048b   ✓ reject  ✓ 8
   example.org     ✓ -all  ✓ 2048b   ⚠ p=none  ✓ 23
-  example.net     ⚠ ~all  ⚠ t=y     ✓ quar    ⚠ 5
+  example.net     ⚠ ~all  ✗ stale   ✓ quar    ⚠ 5
   acme.test       ✗ miss  ✓ 1024b   ✗ miss    · 0
+
+  details:
+    ⚠ example.org: spf=pass dkim=pass dmarc=warn mbx=pass/23
+      ↳ DMARC policy is p=none — collect rua= reports for a few weeks,
+        then move to p=quarantine
+    ✗ example.net: spf=pass dkim=fail dmarc=warn mbx=warn/5
+      ↳ DNS pubkey doesn't match local key — republish
+        default._domainkey.example.net TXT |
+        sieve fileinto "INBOX" bug in 1 mailbox(es): marketing
+        — change to "INBOX.Spam"
 
 == security: web response headers ==
   Domain          HSTS   XFO     XCTO   CSP     RP      PP      COOP    COEP    CORP
   ──────────────  ─────  ──────  ─────  ──────  ──────  ──────  ──────  ──────  ───────
   example.com     ✓ 1y   ✓ SAME  ✓ set  ✓ set   ✓ set   ✓ set   ✓ set   ✗ miss  ✓ set
   example.org     ⚠ 6mo  ✓ DENY  ✓ set  ✗ miss  ⚠ unsa  ✗ miss  ✗ miss  ✗ miss  ⚠ cross
+  legacy.example  · default
   example.net     ✓ 1y   ✓ SAME  ✓ set  ✓ set   ✓ set   ✓ set   ✗ miss  ✗ miss  ✓ set
+
+== security: mail webmail ==
+  Domain          DNS     TLS      Webmail
+  ──────────────  ──────  ───────  ─────────
+  example.com     ✓ A     ✓ valid  ✓ roundcube
+  example.org     ✓ A     ⚠ self   ⚠ default
+  example.net     ⚠ miss  · n/a    · n/a
 
 summary: 47 pass  9 warn  3 fail  2 skip
 ```
@@ -120,8 +145,9 @@ Wire it into cron with `--json` and pipe to your alerting:
 ### "Why did Outlook stop autoconfiguring for one domain?"
 
 ```bash
-sudo plesk-toolbox audit sec/mail-autoconfig
-# Spot the missing DNS record or the broken vhost.
+sudo plesk-toolbox audit sec/mail            # autoconfig + autodiscover + webmail
+# The details: block under the table tells you exactly which subdomain or
+# record is missing per affected domain.
 ```
 
 ### "Mail queue is backed up after a network blip"
@@ -140,12 +166,64 @@ sudo plesk-tool domain/reissue-cert example.com --with-www    # reissue from Let
 
 ### "DKIM stopped validating yesterday"
 
-The single most common Plesk mail bug: the panel rotated the key locally but
-the new public key never made it to DNS.
+The single most common Plesk mail bug: the panel rotated the key locally
+but the new public key never made it to DNS — especially when the zone
+lives on an external provider Plesk can't update directly (AutoDNS,
+Cloudflare, registrar's web UI).
 
 ```bash
-sudo plesk-toolbox audit health/mail            # the row for example.com will read "✗ stale"
-                                                # — paste the suggested fix into your DNS panel
+sudo plesk-toolbox audit health/mail
+# Each warning row now expands in the "details:" block below the table:
+#   ✗ example.com — DNS pubkey doesn't match local key — republish
+#     default._domainkey.example.com TXT
+```
+
+Get the *exact* record to publish, byte-for-byte:
+
+```bash
+sudo plesk-tool mail/dkim-show example.com
+# Prints a copy-paste-ready block:
+#
+#   Publish this DNS record:
+#     name  default._domainkey.example.com
+#     type  TXT
+#     value (copy the line below, single string):
+#   ────────────────────────────────────────────────────────────
+#   v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG…IDAQAB
+#   ────────────────────────────────────────────────────────────
+```
+
+Or, for a bulk migration sweep:
+
+```bash
+sudo plesk-tool mail/dkim-show-all          # only the problem domains
+sudo plesk-tool mail/dkim-show-all --all    # also the passing ones
+```
+
+If the local key is *weak* (≤1024-bit), don't downgrade DNS — rotate to a
+fresh 2048-bit key with **zero signing-gap**:
+
+```bash
+sudo plesk-tool mail/dkim-rotate example.com
+#  → generates default.new alongside the live key
+#  → prints the new TXT record to publish
+#  → live key keeps signing while DNS propagates
+```
+
+Publish the printed TXT in your DNS provider, then once propagated:
+
+```bash
+sudo plesk-tool mail/dkim-verify example.com           # confirm DNS = staged key
+sudo plesk-tool mail/dkim-rotate example.com --activate
+#  → re-verifies DNS one last time, takes a timestamped backup of the
+#    old key, atomic-swaps, restarts pc-remote + postfix
+#  → refuses to swap if DNS still doesn't match (safety check)
+```
+
+End-to-end check (sends a signed mail through the port25 verifier):
+
+```bash
+sudo plesk-tool mail/dkim-verify example.com --verifier --from postmaster@example.com
 ```
 
 ### "Quick visual on this new server"
@@ -214,10 +292,11 @@ Legacy shims still work: `plesk-sec-audit`, `plesk-audit`.
 | `30-plesk-panel` | panel 2FA, panel cert, admin email |
 | `32-plesk-fail2ban` | service, jails, recent ban count |
 | `50-web-tls` | per-domain certificate expiry on :443 |
-| `52-web-security-headers` | per-domain HTTP response headers — HSTS, X-Frame-Options, X-Content-Type-Options, CSP, Referrer-Policy, Permissions-Policy, COOP, COEP, CORP |
+| `52-web-security-headers` | per-domain HTTP response headers — HSTS, X-Frame-Options, X-Content-Type-Options, CSP, Referrer-Policy, Permissions-Policy, COOP, COEP, CORP. Auto-skips vhosts serving the Plesk "Domain Default page" placeholder (set `WEB_HEADERS_SKIP_DEFAULT_PAGE=0` to keep them) |
 | `54-mail-tls` | per mail-enabled domain: `mail.<d>` on 25/465/587/993/995 — reachability + cert expiry + hostname match |
 | `56-mail-mta-sts` | MTA-STS TXT + policy file (RFC 8461) + TLSRPT (RFC 8460) |
 | `58-mail-autoconfig` | Thunderbird autoconfig (`autoconfig.<d>` or `.well-known`) + Outlook autodiscover (`autodiscover.<d>` host or `_autodiscover._tcp` SRV) |
+| `60-mail-webmail` | per mail-enabled domain: `webmail.<d>` DNS + TLS (strict vs. insecure to distinguish self-signed from no-service) + content classification (Roundcube, Horde, SOGo, RainLoop, SnappyMail, AfterLogic, or Plesk default page) |
 
 </details>
 
@@ -228,16 +307,22 @@ Legacy shims still work: `plesk-sec-audit`, `plesk-audit`.
 |----|----------------|
 | `14-system-memory` | cgroup-aware memory + sw-engine RSS |
 | `16-system-disk` | per-mountpoint usage + inode pressure |
-| `18-system-services` | nginx/apache/mariadb/postfix/dovecot/sw-cp-server/psa |
+| `18-system-services` | nginx/apache/mariadb/postfix/dovecot/sw-cp-server/psa — aliases `apache2`↔`httpd` and `mariadb`↔`mysql` so the same audit fires on Debian/Ubuntu and CentOS/RHEL |
 | `40-plesk-license` | license validity, edition, expiry days from `keyinfo --list` |
 | `42-mail-hygiene` | consolidated per-domain table — **SPF** (uniqueness, server-IP coverage, all-qualifier, lookup count, `ptr`), **DKIM** (key bits, DNS↔local byte equality, `p=` revocation, `t=y` flag), **DMARC** (policy strength, `rua=`, multi-record), **Mailboxes** (count + Plesk `fileinto "INBOX"` sieve bug + owner check) |
 
 </details>
 
-All mail-suite audits (`42`, `54`, `56`, `58`) share one filter: they only
-enumerate domains where Plesk's mail service is **actually enabled**
-(`mail_settings.mail_service='true'`), and self-skip on a web-only server. No
-false warnings on hosts that don't do mail.
+All mail-suite audits (`42`, `54`, `56`, `58`, `60`) share one filter:
+they only enumerate domains where Plesk's mail service is **actually
+enabled** (`mail_settings.mail_service='true'`), and self-skip on a
+web-only server. No false warnings on hosts that don't do mail.
+
+**Every table audit prints a `details:` block** under the table that
+expands each ⚠/✗ row with the *why* and the *how to fix* — so a
+warning in the Mailboxes column isn't just "⚠ 14", it's "sieve
+`fileinto \"INBOX\"` bug in mailbox `marketing` — change to
+`\"INBOX.Spam\"`".
 
 ### 🔧 Pillar 2 — `tools` (imperative utilities + fixes)
 
@@ -256,14 +341,29 @@ sudo plesk-tool plesk/slow-queries                    # mysql slow log digest
 sudo plesk-tool plesk/sw-engine-rss                   # PHP-FPM memory hogs
 sudo plesk-tool system/top-open-files
 
+# DKIM operator suite (see "DKIM stopped validating yesterday" recipe above)
+sudo plesk-tool mail/dkim-show example.com            # paste-ready TXT for one domain
+sudo plesk-tool mail/dkim-show-all                    # same, all problem domains
+sudo plesk-tool mail/dkim-verify example.com          # local match-check; --verifier for end-to-end
+sudo plesk-tool mail/dkim-rotate example.com          # stage new 2048-bit key (no swap)
+sudo plesk-tool mail/dkim-rotate example.com --activate  # swap once DNS confirms
+
 # Fix scripts — dry-run optional, confirmation by default
 sudo plesk-tool fix/plesk-repair-mail --dry-run       # describe only
 sudo plesk-tool fix/plesk-repair-mail                 # prompts on TTY
 sudo plesk-tool fix/postfix-tls-policy --yes          # non-interactive
 sudo plesk-tool fix/letsencrypt-renew-all
 
+# Discoverability
 sudo plesk-toolbox tool --list                        # enumerate available tools
+sudo plesk-toolbox tool mail/dkim-rotate --help       # per-tool usage block
 ```
+
+**Every tool supports `--help`.** Each one carries an embedded `usage()`
+function listing modes, flags, side effects, and (where applicable)
+exactly which files it writes and which services it restarts. Tools
+without an explicit help block fall back to printing their leading
+header comment so you still get a one-paragraph orientation.
 
 ### 🎨 Pillar 3 — `mods` (persistent system customisations)
 
@@ -332,11 +432,13 @@ plesk-toolbox/
 │   ├── plesk-mod             #   → mod
 │   └── server-motd-refresh   #   systemd timer worker
 ├── lib/                      # shared bash libraries
-│   ├── common.sh             #   emit API, tables, formatting, config loading
+│   ├── common.sh             #   emit API, tables (with auto details:),
+│   │                         #   formatting, config loading
 │   ├── plesk.sh              #   plesk CLI helpers, domain enumeration
+│   ├── dkim.sh               #   DKIM keyfile/pubkey/record helpers
 │   ├── tls.sh                #   testssl.sh / openssl wrapper
-│   ├── dispatch.sh           #   top-level subcommand router
-│   ├── runner.sh             #   audits.d/ + tools.d/ loader
+│   ├── dispatch.sh           #   top-level subcommand router (--help aware)
+│   ├── runner.sh             #   audits.d/ + tools.d/ loader (--help aware)
 │   ├── safety.sh             #   dry-run, confirm, lock, reversible ops
 │   └── logging.sh            #   JSONL log writer
 ├── audits.d/

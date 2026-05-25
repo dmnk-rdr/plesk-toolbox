@@ -14,6 +14,31 @@
 # shellcheck source=../../lib/dkim.sh
 . "${PTBOX_ROOT}/lib/dkim.sh"
 
+usage() {
+    cat <<'EOF'
+plesk-tool mail/dkim-show <domain> [selector] [--bind]
+
+Read /etc/domainkeys/<domain>/<selector> (selector defaults to "default"),
+build the canonical "v=DKIM1; k=rsa; p=<base64>" TXT record, compare it to
+what's currently published in DNS, and print a copy-paste-ready block.
+
+Status meanings:
+  match    DNS already publishes this exact key — nothing to do.
+  STALE    DNS publishes a *different* key. Either republish the local
+           key (shown), or rotate locally first with mail/dkim-rotate.
+  missing  No TXT record at <sel>._domainkey.<domain> yet. Publish it.
+  REVOKED  Published TXT has empty p= (RFC-defined "revoke this key").
+  weak     Local key is below the configured MAIL_DKIM_MIN_BITS (2048).
+           Run mail/dkim-rotate before publishing — don't downgrade DNS.
+
+Flags:
+  --bind   also print the 255-char-chunked BIND zone-file form (only
+           needed if you're editing a raw zone file, not a DNS UI).
+
+Read-only — never touches the key file or DNS.
+EOF
+}
+
 _dkim_show_one() {
     local d="$1" sel="${2:-}" bind_mode="${3:-}"
     local keyfile

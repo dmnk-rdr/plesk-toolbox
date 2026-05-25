@@ -25,6 +25,31 @@
 # shellcheck source=../../lib/dkim.sh
 . "${PTBOX_ROOT}/lib/dkim.sh"
 
+usage() {
+    cat <<'EOF'
+plesk-tool mail/dkim-verify <domain> [selector]
+plesk-tool mail/dkim-verify <domain> --send <addr> [--from <addr>]
+plesk-tool mail/dkim-verify <domain> --verifier [--from <addr>]
+
+Default (local validation):
+  Reads /etc/domainkeys/<d>/<selector>, fetches the published TXT, and
+  reports match / stale / missing / revoked / weak / testing. Exits non-
+  zero on anything but a clean match — wire into CI or a healthcheck.
+
+--send <addr>:
+  Submit a signed test mail through the local Postfix to <addr>. The
+  recipient mailbox can then show whether the signature validated and
+  with which selector. Requires swaks.
+
+--verifier:
+  Shortcut for --send check-auth@verifier.port25.com — the port25
+  verifier service emails a full SPF/DKIM/DMARC report back to the
+  From: address. Use --from to override the default (postmaster@<d>).
+
+Read-only unless --send / --verifier is given.
+EOF
+}
+
 _verify_local() {
     local d="$1" sel="$2" keyfile
     keyfile="$(dkim_keyfile "$d" "$sel")"

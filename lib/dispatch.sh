@@ -54,6 +54,7 @@ EOF
 # Parse global flags out of argv, leaving positional args in _DISPATCH_ARGS
 _parse_global_flags() {
     _DISPATCH_ARGS=()
+    _DISPATCH_HELP=0
     local a
     for a in "$@"; do
         case "$a" in
@@ -62,14 +63,81 @@ _parse_global_flags() {
             --yes|-y)    ASSUME_YES=1 ;;
             --list)      DISPATCH_LIST=1 ;;
             --no-color)  C_RST=''; C_DIM=''; C_BOLD=''; C_RED=''; C_GRN=''; C_YEL=''; C_BLU=''; C_CYN='' ;;
+            --help|-h)   _DISPATCH_HELP=1 ;;
             *)           _DISPATCH_ARGS+=("$a") ;;
         esac
     done
     export JSON_OUTPUT DRY_RUN ASSUME_YES
 }
 
+# Per-pillar help blocks — shown when a pillar gets --help with no further args,
+# OR when --help appears without a tool name (e.g. `plesk-toolbox tool --help`).
+_pillar_help() {
+    case "$1" in
+        audit) cat <<'EOF'
+plesk-toolbox audit [profile] [--json] [--list] [--no-color]
+
+profile:
+  (empty)             full audit (sec + health)
+  sec | health        one pillar
+  <group>             same group across both pillars (e.g. "mail", "system")
+  sec/<group>         single group within a pillar (e.g. "sec/mail-tls")
+
+examples:
+  plesk-toolbox audit                      # everything
+  plesk-toolbox audit sec                  # security only
+  plesk-toolbox audit mail                 # SPF, DKIM, DMARC, mail-TLS, MTA-STS,
+                                           #   autoconfig, webmail, mailbox sieves
+  plesk-toolbox audit health/mail          # mail-hygiene only
+  plesk-toolbox audit --json | jq ...      # machine-readable
+  plesk-toolbox audit --list               # enumerate available checks
+EOF
+            ;;
+        tool) cat <<'EOF'
+plesk-toolbox tool <group>/<name> [args] [--dry-run] [--yes]
+
+list available tools:
+  plesk-toolbox tool --list
+  plesk-toolbox tool                       # same as --list
+
+per-tool help:
+  plesk-toolbox tool <group>/<name> --help
+
+global flags (recognised before the tool name):
+  --dry-run    describe changes, don't execute them
+  --yes / -y   skip TTY confirmation prompts
+  --no-color   strip ANSI colour codes
+
+examples:
+  plesk-toolbox tool mail/dkim-show example.com
+  plesk-toolbox tool mail/dkim-rotate example.com --bits 4096
+  plesk-toolbox tool fix/plesk-repair-mail --dry-run
+  plesk-toolbox tool domain/show example.com
+EOF
+            ;;
+        mod) cat <<'EOF'
+plesk-toolbox mod {list | status <name> | enable <name> | disable <name>}
+
+mods are reversible system customisations. enabling writes a manifest of
+every file the mod touched to /var/lib/plesk-toolbox/mods/<name>.manifest;
+disabling undoes exactly those changes.
+
+examples:
+  plesk-toolbox mod list
+  plesk-toolbox mod status motd
+  plesk-toolbox mod enable motd
+  plesk-toolbox mod disable motd
+EOF
+            ;;
+    esac
+}
+
 # dispatch_audit [profile]
 dispatch_audit() {
+    if [[ "${_DISPATCH_HELP:-0}" -eq 1 ]]; then
+        _pillar_help audit
+        return 0
+    fi
     _load_config
     _runner_reset_counters
     local profile="${1:-}"
@@ -107,15 +175,28 @@ dispatch_tool() {
         return 0
     fi
     local spec="${1:-}"; shift || true
+    # Pillar-level help: `plesk-toolbox tool --help` (no spec). With a spec,
+    # the --help gets passed through to run_tool which honours it per-tool.
     if [[ -z "$spec" ]]; then
-        list_tools
+        if [[ "${_DISPATCH_HELP:-0}" -eq 1 ]]; then
+            _pillar_help tool
+        else
+            list_tools
+        fi
         return 0
+    fi
+    if [[ "${_DISPATCH_HELP:-0}" -eq 1 ]]; then
+        set -- --help "$@"
     fi
     run_tool "$spec" "$@"
 }
 
 # dispatch_mod <subcmd> [args...]
 dispatch_mod() {
+    if [[ "${_DISPATCH_HELP:-0}" -eq 1 ]]; then
+        _pillar_help mod
+        return 0
+    fi
     _load_config
     # shellcheck source=safety.sh
     . "${PTBOX_ROOT}/lib/safety.sh"

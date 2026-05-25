@@ -28,6 +28,47 @@
 # shellcheck source=../../lib/dkim.sh
 . "${PTBOX_ROOT}/lib/dkim.sh"
 
+usage() {
+    cat <<'EOF'
+plesk-tool mail/dkim-rotate <domain> [--bits N] [--bind]
+plesk-tool mail/dkim-rotate <domain> --activate
+plesk-tool mail/dkim-rotate <domain> --discard
+
+Two-phase DKIM key rotation that never creates a signing gap, even with
+external DNS providers (AutoDNS, Cloudflare, …) where Plesk can't update
+the zone itself.
+
+Workflow:
+  1. stage    (default mode)
+       Generate a fresh 2048-bit key as <keyfile>.new next to the live
+       key. Print the TXT record the new key would need. The live key
+       is NOT touched — mail keeps signing with the old key.
+  2. publish the printed TXT record in your DNS provider.
+  3. wait for DNS propagation (verify with mail/dkim-verify <domain>).
+  4. --activate
+       Re-fetch the TXT record. If it matches the staged key, take a
+       timestamped backup of the live key, atomically swap in the new
+       one, and restart pc-remote + postfix so signers pick up the
+       change. If DNS doesn't yet match, refuse to swap.
+
+Other modes:
+  --discard  delete the staged key without touching anything else.
+  --force    overwrite an existing staged key when re-staging.
+
+Options:
+  --bits N   key size for stage (default: 2048)
+  --bind     also print BIND-style 255-char chunks
+  --dry-run  (global) describe operations without executing them
+  --yes/-y   (global) skip the TTY confirmation prompts
+
+Writes:
+  /etc/domainkeys/<d>/default.new           (stage)
+  /etc/domainkeys/<d>/default               (activate, after backup)
+  /etc/domainkeys/<d>/default.bak.<epoch>   (backup, kept indefinitely)
+  systemctl restart pc-remote postfix       (activate only)
+EOF
+}
+
 : "${DKIM_ROTATE_SERVICES:=pc-remote postfix}"
 : "${DKIM_KEY_OWNER:=root:popuser}"
 : "${DKIM_KEY_MODE:=640}"

@@ -17,6 +17,24 @@
 # shellcheck source=./dkim-show.sh
 . "${PTBOX_ROOT}/tools.d/mail/dkim-show.sh"
 
+usage() {
+    cat <<'EOF'
+plesk-tool mail/dkim-show-all [--all] [--bind]
+
+Iterate every Plesk mail-enabled domain and print the canonical DKIM TXT
+record for every domain whose DKIM is stale, revoked, missing, or below
+the configured key length. Use this when migrating between servers — you
+get one paste-ready record per problem domain in a single run.
+
+Flags:
+  --all    also include domains whose DKIM already matches DNS (default
+           is to skip them — they need no action).
+  --bind   also print the 255-char-chunked BIND zone-file form per record.
+
+Read-only.
+EOF
+}
+
 main() {
     local show_all=0 bind_mode=""
     local a

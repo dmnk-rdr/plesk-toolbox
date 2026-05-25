@@ -97,6 +97,27 @@ run_tool() {
     _PTBOX_TOOL_ARGS="$*"
     # shellcheck disable=SC1090
     . "$path"
+
+    # --help / -h short-circuit: every tool gets help-for-free if it defines
+    # a usage() function. Fall back to the leading comment block of the file
+    # so even tools without usage() print *something* useful.
+    local a
+    for a in "$@"; do
+        case "$a" in
+            --help|-h)
+                if declare -F usage >/dev/null; then
+                    usage
+                else
+                    # Fall back: print the leading comment block so even
+                    # tools without an explicit usage() function give the
+                    # operator something to read.
+                    awk '/^[^#]/ && NR>1 {exit} /^#/ {sub(/^# ?/,""); print}' "$path"
+                    printf '\n(no detailed usage block — see source: %s)\n' "$path"
+                fi
+                return 0 ;;
+        esac
+    done
+
     if declare -F main >/dev/null; then
         main "$@"
     else

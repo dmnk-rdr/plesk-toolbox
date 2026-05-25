@@ -23,6 +23,8 @@ section "security: web response headers"
 : "${WEB_HEADERS_HSTS_MIN_DAYS:=180}"        # warn under 6 months; the
                                               # RFC 6797 author guidance is ≥1y
 : "${WEB_DOMAIN_TRUNCATE:=22}"
+: "${WEB_HEADERS_SKIP_DEFAULT_PAGE:=1}"       # skip domains serving the Plesk
+                                              # "Domain Default page" placeholder
 
 if ! _plesk_available; then
     emit "sec.web.headers" "medium" "skip" "plesk CLI not available"
@@ -48,6 +50,23 @@ _fetch_headers() {
         "https://$1/" 2>/dev/null \
         | tr -d '\r' \
         | awk 'BEGIN{IGNORECASE=1} /^[A-Za-z-]+:/ { print tolower($0) }'
+}
+
+# Fetch the first 8 KiB of the rendered page — enough to spot Plesk's
+# placeholder without pulling full pages.
+_fetch_body_snippet() {
+    curl -s -L --max-time "$WEB_HEADERS_TIMEOUT" \
+        --connect-timeout "$WEB_HEADERS_TIMEOUT" \
+        -A "plesk-toolbox audit (content check)" \
+        "https://$1/" 2>/dev/null | head -c 8192
+}
+
+# Plesk's "Domain Default page" placeholder — no real site behind the vhost.
+_is_plesk_default_page() {
+    local body="$1"
+    [[ "$body" == *"<title>Domain Default page</title>"* ]] && return 0
+    [[ "$body" == *"default-website-content"* ]] && return 0
+    return 1
 }
 
 # _hdr <blob> <header-name-lowercase> → value, or empty
@@ -221,6 +240,16 @@ for d in "${domains[@]}"; do
             "$(status_cell skip 'no-resp')" "" "" "" "" "" "" "" ""
         emit "sec.web.headers.${d}" "low" "skip" "${d}: no HTTPS response"
         continue
+    fi
+
+    if (( WEB_HEADERS_SKIP_DEFAULT_PAGE == 1 )); then
+        if _is_plesk_default_page "$(_fetch_body_snippet "$d")"; then
+            table_row "$label" \
+                "$(status_cell skip 'default')" "" "" "" "" "" "" "" ""
+            emit "sec.web.headers.${d}" "info" "skip" \
+                "${d}: Plesk default page (no website published)"
+            continue
+        fi
     fi
 
     H_HSTS_FIX="" H_XFO_FIX="" H_XCTO_FIX="" H_CSP_FIX=""

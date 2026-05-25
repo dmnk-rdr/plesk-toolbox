@@ -28,12 +28,15 @@ tool_begin() {
     [[ -n "$desc" ]] && printf '  %s\n' "$desc"
     [[ "$DRY_RUN" -eq 1 ]] && printf '  (dry-run: no changes will be made)\n'
 
-    # Acquire lock (non-blocking; fail fast if busy)
-    exec {_PTBOX_TOOL_LOCK_FD}>"$PTBOX_LOCK" 2>/dev/null || {
+    # Acquire lock (non-blocking; fail fast if busy).
+    # NOTE: `2>/dev/null` on a command-less `exec` redirects the *shell's*
+    # stderr permanently — losing every error message every tool ever
+    # prints. Wrap in a brace-group so the stderr redirect is scoped.
+    if ! { exec {_PTBOX_TOOL_LOCK_FD}>"$PTBOX_LOCK"; } 2>/dev/null; then
         printf '  warning: could not open lock file %s\n' "$PTBOX_LOCK" >&2
         _PTBOX_TOOL_LOCK_FD=""
         return 0
-    }
+    fi
     if ! flock -n "$_PTBOX_TOOL_LOCK_FD" 2>/dev/null; then
         printf '  error: another plesk-toolbox tool is running (lock: %s)\n' "$PTBOX_LOCK" >&2
         _PTBOX_TOOL_RESULT="locked"
@@ -74,7 +77,9 @@ tool_end() {
     local result="${1:-$_PTBOX_TOOL_RESULT}"
     local dur=$(( $(date +%s) - _PTBOX_TOOL_START ))
     if [[ -n "$_PTBOX_TOOL_LOCK_FD" ]]; then
-        exec {_PTBOX_TOOL_LOCK_FD}>&- 2>/dev/null || true
+        # Same brace-group trick as in tool_begin — command-less `exec` would
+        # otherwise leak the 2>/dev/null into the shell's stderr.
+        { exec {_PTBOX_TOOL_LOCK_FD}>&-; } 2>/dev/null || true
         _PTBOX_TOOL_LOCK_FD=""
     fi
     if declare -F log_tool_run >/dev/null; then

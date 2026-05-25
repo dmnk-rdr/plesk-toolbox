@@ -71,8 +71,15 @@ emit() {
     fi
 
     # Audits that render their results as a table suppress per-row prose; the
-    # counters above still tick so the summary line stays accurate.
-    [[ "${_EMIT_SILENT:-0}" -eq 1 ]] && return 0
+    # counters above still tick so the summary line stays accurate. Stash
+    # actionable details (warn/fail with a fix hint) so table_render can
+    # print them in a "details:" section after the table.
+    if [[ "${_EMIT_SILENT:-0}" -eq 1 ]]; then
+        if [[ -n "$fix" && ( "$status" == "warn" || "$status" == "fail" ) ]]; then
+            _TBL_DETAILS+=("${status}"$'\x1f'"${id}"$'\x1f'"${message}"$'\x1f'"${fix}")
+        fi
+        return 0
+    fi
 
     local tag color
     case "$status" in
@@ -108,6 +115,7 @@ emit() {
 
 _TBL_HEADERS=()
 _TBL_ROWS=()
+_TBL_DETAILS=()
 _TBL_ACTIVE=0
 
 # table_init <header1> <header2> …
@@ -115,6 +123,7 @@ table_init() {
     [[ "${JSON_OUTPUT:-0}" -eq 1 ]] && return 0
     _TBL_HEADERS=("$@")
     _TBL_ROWS=()
+    _TBL_DETAILS=()
     _TBL_ACTIVE=1
     _EMIT_SILENT=1
 }
@@ -222,10 +231,30 @@ table_render() {
         printf '\n'
     done
 
+    # Detail block: per-row fix hints collected during silent emit().
+    # Surfaces the *why* of every ⚠/✗ in the table so the operator doesn't
+    # have to re-run with --json or dig through code to find out what's
+    # actually wrong.
+    if (( ${#_TBL_DETAILS[@]} > 0 )); then
+        local d_status _d_id d_msg d_fix sym color
+        printf '\n  %sdetails:%s\n' "${C_BOLD:-}" "${C_RST:-}"
+        for row in "${_TBL_DETAILS[@]}"; do
+            IFS=$'\x1f' read -r d_status _d_id d_msg d_fix <<< "$row"
+            case "$d_status" in
+                warn) sym='⚠'; color="$C_YEL" ;;
+                fail) sym='✗'; color="$C_RED" ;;
+                *)    sym='·'; color="$C_DIM" ;;
+            esac
+            printf '    %s%s %s%s\n' "$color" "$sym" "${d_msg}" "$C_RST"
+            printf '      %s↳ %s%s\n' "$C_DIM" "$d_fix" "$C_RST"
+        done
+    fi
+
     _EMIT_SILENT=0
     _TBL_ACTIVE=0
     _TBL_HEADERS=()
     _TBL_ROWS=()
+    _TBL_DETAILS=()
 }
 
 # status_cell <status> [short-text]

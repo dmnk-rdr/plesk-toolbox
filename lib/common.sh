@@ -70,6 +70,10 @@ emit() {
         return 0
     fi
 
+    # Audits that render their results as a table suppress per-row prose; the
+    # counters above still tick so the summary line stays accurate.
+    [[ "${_EMIT_SILENT:-0}" -eq 1 ]] && return 0
+
     local tag color
     case "$status" in
         pass) tag="PASS"; color="$C_GRN" ;;
@@ -82,6 +86,209 @@ emit() {
     if [[ -n "$fix" && "$status" != "pass" && "$status" != "skip" ]]; then
         printf '         %s↳ %s%s\n' "$C_DIM" "$fix" "$C_RST"
     fi
+}
+
+# ─── Table API ──────────────────────────────────────────────────────────────
+# For audits that report one row per subject (domain, port, mount …) — much
+# more readable than a flat list of [PASS]/[WARN] lines. Counters keep ticking
+# via emit() while the per-row prose is suppressed; the table is rendered once
+# at the end of the audit.
+#
+# Usage:
+#     table_init "Domain" "SPF" "DKIM" "DMARC"      # column headers
+#     for d in "${domains[@]}"; do
+#         spf_cell="$(status_cell pass '-all')"
+#         …
+#         table_row "$d" "$spf_cell" "$dkim_cell" "$dmarc_cell"
+#         emit "health.mail.${d}" "$worst_sev" "$worst_status" "summary" "fix"
+#     done
+#     table_render
+#
+# JSON mode (`--json`): table_* are no-ops; emit() emits structured rows.
+
+_TBL_HEADERS=()
+_TBL_ROWS=()
+_TBL_ACTIVE=0
+
+# table_init <header1> <header2> …
+table_init() {
+    [[ "${JSON_OUTPUT:-0}" -eq 1 ]] && return 0
+    _TBL_HEADERS=("$@")
+    _TBL_ROWS=()
+    _TBL_ACTIVE=1
+    _EMIT_SILENT=1
+}
+
+# table_row <cell1> <cell2> …
+# Cells may contain ANSI colour codes; width is measured on stripped text.
+table_row() {
+    [[ "${JSON_OUTPUT:-0}" -eq 1 ]] && return 0
+    [[ "${_TBL_ACTIVE:-0}" -eq 1 ]] || return 0
+    local row=""
+    local first=1
+    local c
+    for c in "$@"; do
+        if (( first )); then row="$c"; first=0
+        else row="${row}"$'\x1f'"${c}"; fi
+    done
+    _TBL_ROWS+=("$row")
+}
+
+# Visible width of a cell — strips ANSI escapes, counts UTF-8 chars (not bytes).
+# Relies on the shell running under a UTF-8 locale; install.sh ensures that.
+_cell_width() {
+    local s="$1"
+    local out="" i ch in_esc=0
+    for (( i=0; i<${#s}; i++ )); do
+        ch="${s:i:1}"
+        if (( in_esc )); then
+            [[ "$ch" =~ [a-zA-Z] ]] && in_esc=0
+            continue
+        fi
+        if [[ "$ch" == $'\x1b' ]]; then in_esc=1; continue; fi
+        out+="$ch"
+    done
+    printf '%d' "${#out}"
+}
+
+# Pad a cell to width (right-pad with spaces). ANSI-aware.
+_cell_pad() {
+    local cell="$1" width="$2"
+    local visible
+    visible="$(_cell_width "$cell")"
+    local pad=$(( width - visible ))
+    (( pad < 0 )) && pad=0
+    printf '%s%*s' "$cell" "$pad" ""
+}
+
+# table_render — flush buffered table to stdout, reset state.
+table_render() {
+    if [[ "${JSON_OUTPUT:-0}" -eq 1 ]]; then
+        _EMIT_SILENT=0; _TBL_ACTIVE=0; _TBL_HEADERS=(); _TBL_ROWS=()
+        return 0
+    fi
+    [[ "${_TBL_ACTIVE:-0}" -eq 1 ]] || return 0
+
+    local ncols=${#_TBL_HEADERS[@]}
+    if (( ncols == 0 )) || (( ${#_TBL_ROWS[@]} == 0 )); then
+        _EMIT_SILENT=0; _TBL_ACTIVE=0
+        _TBL_HEADERS=(); _TBL_ROWS=()
+        return 0
+    fi
+
+    # Compute per-column widths
+    local -a widths
+    local i
+    for (( i=0; i<ncols; i++ )); do
+        widths[i]=$(_cell_width "${_TBL_HEADERS[i]}")
+    done
+
+    local row cells w
+    for row in "${_TBL_ROWS[@]}"; do
+        IFS=$'\x1f' read -ra cells <<< "$row"
+        for (( i=0; i<ncols; i++ )); do
+            w=$(_cell_width "${cells[i]:-}")
+            (( w > widths[i] )) && widths[i]=$w
+        done
+    done
+
+    # Header row
+    printf '  '
+    for (( i=0; i<ncols; i++ )); do
+        printf '%s%s%s' "$C_BOLD" "$(_cell_pad "${_TBL_HEADERS[i]}" "${widths[i]}")" "$C_RST"
+        (( i < ncols-1 )) && printf '  '
+    done
+    printf '\n'
+
+    # Separator
+    printf '  '
+    for (( i=0; i<ncols; i++ )); do
+        printf '%s' "$C_DIM"
+        local n=0
+        while (( n < widths[i] )); do printf '─'; n=$((n+1)); done
+        printf '%s' "$C_RST"
+        (( i < ncols-1 )) && printf '  '
+    done
+    printf '\n'
+
+    # Data rows
+    for row in "${_TBL_ROWS[@]}"; do
+        IFS=$'\x1f' read -ra cells <<< "$row"
+        printf '  '
+        for (( i=0; i<ncols; i++ )); do
+            printf '%s' "$(_cell_pad "${cells[i]:-}" "${widths[i]}")"
+            (( i < ncols-1 )) && printf '  '
+        done
+        printf '\n'
+    done
+
+    _EMIT_SILENT=0
+    _TBL_ACTIVE=0
+    _TBL_HEADERS=()
+    _TBL_ROWS=()
+}
+
+# status_cell <status> [short-text]
+# status: pass | warn | fail | skip | info
+# Returns a coloured cell with a symbol prefix; safe inside table_row.
+status_cell() {
+    local status="$1" short="${2:-}"
+    local sym color
+    case "$status" in
+        pass) sym='✓'; color="$C_GRN" ;;
+        fail) sym='✗'; color="$C_RED" ;;
+        warn) sym='⚠'; color="$C_YEL" ;;
+        skip) sym='·'; color="$C_DIM" ;;
+        info) sym='ⓘ'; color="$C_BLU" ;;
+        *)    sym='?'; color="" ;;
+    esac
+    if [[ -n "$short" ]]; then
+        printf '%s%s %s%s' "$color" "$sym" "$short" "$C_RST"
+    else
+        printf '%s%s%s' "$color" "$sym" "$C_RST"
+    fi
+}
+
+# worst_status <status1> <status2> …
+# Returns the most severe status (fail > warn > skip > info > pass).
+worst_status() {
+    local s out="pass"
+    for s in "$@"; do
+        case "$s" in
+            fail) echo "fail"; return ;;
+            warn) out="warn" ;;
+            skip) [[ "$out" == "pass" ]] && out="skip" ;;
+            info) [[ "$out" == "pass" ]] && out="info" ;;
+        esac
+    done
+    echo "$out"
+}
+
+# truncate <string> <max-len>
+# Domains get an ellipsis in the middle so prefix (subdomain) AND suffix (TLD)
+# stay readable. Prefix gets ~40%, suffix ~60% of the budget.
+truncate() {
+    local s="$1" max="$2"
+    local len=${#s}
+    (( len <= max )) && { printf '%s' "$s"; return; }
+    local pre=$(( (max - 1) * 4 / 10 ))
+    local suf=$(( max - 1 - pre ))
+    (( pre < 1 )) && pre=1
+    (( suf < 1 )) && suf=1
+    printf '%s…%s' "${s:0:pre}" "${s: -suf}"
+}
+
+# worst_severity <sev1> <sev2> …
+# Returns the highest severity (critical > high > medium > low > info).
+worst_severity() {
+    local s out="info"
+    declare -A rank=([info]=0 [low]=1 [medium]=2 [high]=3 [critical]=4)
+    local out_rank=0
+    for s in "$@"; do
+        local r="${rank[$s]:-0}"
+        if (( r > out_rank )); then out_rank=$r; out="$s"; fi
+    done
+    echo "$out"
 }
 
 # Minimal JSON string escaper

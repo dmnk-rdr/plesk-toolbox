@@ -176,7 +176,9 @@ dispatch_mod() {
 dispatch_main() {
     local pillar="${1:-}"; shift || true
     _parse_global_flags "$@"
-    set -- "${_DISPATCH_ARGS[@]}"
+    # Bash 4.2 (CentOS 7) + set -u: ${arr[@]} on an empty array is "unbound".
+    # The +"…" expansion preserves emptiness without tripping nounset.
+    set -- ${_DISPATCH_ARGS[@]+"${_DISPATCH_ARGS[@]}"}
     case "$pillar" in
         audit)    dispatch_audit "$@" ;;
         tool)     dispatch_tool "$@" ;;

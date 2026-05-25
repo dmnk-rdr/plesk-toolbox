@@ -21,7 +21,9 @@ _tls_scan() {
         local opt="-${proto}" starttls_opt=()
         [[ -n "$starttls" ]] && starttls_opt=(-starttls "$starttls")
         local result
-        if echo | timeout 5 openssl s_client "$opt" "${starttls_opt[@]}" \
+        # Bash 4.2 + set -u: ${arr[@]} on an empty array trips nounset.
+        # The +"…" expansion preserves emptiness without unbinding.
+        if echo | timeout 5 openssl s_client "$opt" ${starttls_opt[@]+"${starttls_opt[@]}"} \
                    -connect "${host}:${port}" -servername "$host" \
                    2>/dev/null | grep -q "BEGIN CERTIFICATE"; then
             printf '%s\tsupported\n' "$proto"
@@ -37,7 +39,7 @@ _tls_cert_days() {
     local starttls_opt=()
     [[ -n "$starttls" ]] && starttls_opt=(-starttls "$starttls")
     local end_date
-    end_date="$(echo | timeout 5 openssl s_client "${starttls_opt[@]}" \
+    end_date="$(echo | timeout 5 openssl s_client ${starttls_opt[@]+"${starttls_opt[@]}"} \
                 -connect "${host}:${port}" -servername "$host" 2>/dev/null \
                 | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)"
     [[ -z "$end_date" ]] && { echo "-1"; return 1; }

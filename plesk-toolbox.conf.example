@@ -27,13 +27,14 @@
 # Services checked by health/18-system-services.sh
 # CRITICAL_SERVICES="nginx apache2 mariadb postfix dovecot sw-cp-server psa"
 
-# ─── Audit: mail hygiene ────────────────────────────────────────────────
-# Max domains to scan for SPF/DKIM/DMARC (saves DNS lookups on large servers).
+# ─── Audit: mail hygiene (consolidated SPF / DKIM / DMARC / mailboxes) ──
+# Max domains to scan (saves DNS lookups on large servers).
 # MAIL_HYGIENE_MAX_DOMAINS=50
-# Leave empty for auto-detect via `plesk bin dkim --info <domain>`
-# DKIM_SELECTOR=
-# Null-MX domains (RFC 7505, "0 .") get an info pass instead of SPF/DMARC warns.
-# MAIL_HYGIENE_NULL_MX_INFO=1
+# MAIL_DKIM_MIN_BITS=2048
+# DKIM_SELECTOR=default
+# MAIL_SIEVE_CHECK=1                             # detect fileinto "INBOX" bug
+# Truncate long domain names in table output (chars; 0 = no truncate)
+# MAIL_DOMAIN_TRUNCATE=22
 
 # ─── Audit: mail TLS (mail.<d>:25/465/587/993/995) ──────────────────────
 # MAIL_TLS_MAX_DOMAINS=25
@@ -49,12 +50,18 @@
 # MAIL_AUTOCONFIG_REQUIRE_HOST=0                 # 0 = .well-known acceptable
 # MAIL_AUTOCONFIG_TIMEOUT=6
 
-# ─── Audit: mailbox inventory + sieve sanity ────────────────────────────
-# MAIL_MAILBOX_MAX_DOMAINS=50
-# MAIL_SIEVE_CHECK=1                             # detect fileinto "INBOX" bug
-
 # ─── Audit: web TLS ─────────────────────────────────────────────────────
 # WEB_TLS_MAX_DOMAINS=25
+# WEB_DOMAIN_TRUNCATE=22
+
+# ─── Audit: web security headers ────────────────────────────────────────
+# WEB_HEADERS_MAX_DOMAINS=25
+# WEB_HEADERS_TIMEOUT=6
+# Minimum acceptable HSTS max-age before downgrading to warn (days).
+# WEB_HEADERS_HSTS_MIN_DAYS=180
+# Service-subdomain prefixes to skip (these endpoints serve fixed XML, not
+# user-visible sites). Space-separated, each must end with a dot.
+# WEB_HEADERS_SKIP_PREFIXES="autodiscover. autoconfig. mta-sts. _dmarc."
 
 # ─── Severity overrides ─────────────────────────────────────────────────
 # Format: SEVERITY_OVERRIDE_<check_id_with_dots_as_underscores>="<severity>"

@@ -15,7 +15,8 @@
 . "${PTBOX_ROOT}/lib/dkim.sh"
 
 _dkim_show_one() {
-    local d="$1" sel="${2:-}" keyfile
+    local d="$1" sel="${2:-}" bind_mode="${3:-}"
+    local keyfile
     keyfile="$(dkim_keyfile "$d" "$sel")"
     if [[ ! -r "$keyfile" ]]; then
         printf '  %s%s%s — no local DKIM key (%s)\n' \
@@ -40,52 +41,58 @@ _dkim_show_one() {
 
     local status_color status_text
     case "$status" in
-        ok)      status_color="${C_GRN:-}"; status_text="match" ;;
-        stale)   status_color="${C_RED:-}"; status_text="STALE — DNS pubkey differs from local key" ;;
-        no-dns)  status_color="${C_RED:-}"; status_text="missing — no TXT record published" ;;
+        ok)      status_color="${C_GRN:-}"; status_text="match — DNS already publishes this key" ;;
+        stale)   status_color="${C_RED:-}"; status_text="STALE — DNS publishes a different key" ;;
+        no-dns)  status_color="${C_RED:-}"; status_text="missing — no TXT record published yet" ;;
         revoked) status_color="${C_RED:-}"; status_text="REVOKED — published TXT has empty p=" ;;
-        weak)    status_color="${C_YEL:-}"; status_text="weak — local key is ${bits}-bit (need 2048+)" ;;
-        testing) status_color="${C_YEL:-}"; status_text="testing — DNS TXT has t=y flag" ;;
+        weak)    status_color="${C_YEL:-}"; status_text="weak — local key is ${bits}-bit (rotate to 2048+ recommended)" ;;
+        testing) status_color="${C_YEL:-}"; status_text="testing — DNS TXT carries t=y" ;;
         *)       status_color=""; status_text="$status" ;;
     esac
 
-    printf '\n  %s%s%s  (%s-bit, selector=%s)\n' \
+    printf '\n  %s%s%s  (local key: %s-bit, selector=%s)\n' \
         "${C_BOLD:-}" "$d" "${C_RST:-}" "${bits:-?}" "$sel"
     printf '  %sstatus%s  %s%s%s\n' \
         "${C_DIM:-}" "${C_RST:-}" "$status_color" "$status_text" "${C_RST:-}"
 
-    printf '  %srecord%s  %s\n' "${C_DIM:-}" "${C_RST:-}" "$name"
-    printf '  %stype%s    TXT\n' "${C_DIM:-}" "${C_RST:-}"
+    # Always print the publish block — even on match, so the operator can
+    # quickly verify the live value byte-for-byte against their DNS UI.
+    dkim_print_publish_block "$name" "$value" "$bind_mode"
 
-    printf '  %svalue%s   %s\n' "${C_DIM:-}" "${C_RST:-}" "$value"
-
-    # Most DNS UIs accept the whole string. BIND-style zone files want it
-    # split into 255-char quoted chunks; show that form as well when it's
-    # actually needed.
-    if (( ${#value} > 255 )); then
-        printf '  %schunked (BIND-style):%s\n' "${C_DIM:-}" "${C_RST:-}"
-        local chunk
-        while IFS= read -r chunk; do
-            printf '            %s\n' "$chunk"
-        done < <(dkim_chunks "$value")
+    # Diff context for stale: show truncated prefixes so the operator can
+    # see *why* it doesn't match without scrolling the full base64.
+    if [[ -n "$dns_p" && "$dns_p" != "$local_p" ]]; then
+        printf '\n  %swhy stale (first 40 chars of each pubkey):%s\n' "${C_DIM:-}" "${C_RST:-}"
+        printf '    currently in DNS:   %s%.40s…%s\n' "${C_YEL:-}" "$dns_p" "${C_RST:-}"
+        printf '    on this server:     %s%.40s…%s  (this one is in the value above)\n' \
+            "${C_GRN:-}" "$local_p" "${C_RST:-}"
     fi
 
-    # If DNS is published, show the diff so it's obvious *what* is stale.
-    if [[ -n "$dns_p" && "$dns_p" != "$local_p" ]]; then
-        printf '\n  %sDNS currently publishes a different key:%s\n' "${C_DIM:-}" "${C_RST:-}"
-        printf '  %sDNS  p=%s%s%.40s…\n' "${C_DIM:-}" "${C_RST:-}" "${C_YEL:-}" "$dns_p"
-        printf '  %slocal p=%s%s%.40s…  %s← publish this%s\n' \
-            "${C_DIM:-}" "${C_RST:-}" "${C_GRN:-}" "$local_p" "${C_DIM:-}" "${C_RST:-}"
+    if [[ "$status" != "ok" ]]; then
+        printf '\n  After publishing:\n'
+        printf '    plesk-tool mail/dkim-verify %s\n' "$d"
     fi
     return 0
 }
 
 main() {
-    local d="${1:-}" sel="${2:-}"
+    local d="" sel="" bind_mode=""
+    while (( $# )); do
+        case "$1" in
+            --bind) bind_mode="--bind" ;;
+            -*)     printf 'unknown flag: %s\n' "$1" >&2; return 2 ;;
+            *)
+                if   [[ -z "$d" ]];   then d="$1"
+                elif [[ -z "$sel" ]]; then sel="$1"
+                else printf 'extra arg: %s\n' "$1" >&2; return 2
+                fi ;;
+        esac
+        shift
+    done
     if [[ -z "$d" ]]; then
-        printf 'usage: plesk-tool mail/dkim-show <domain> [selector]\n' >&2
+        printf 'usage: plesk-tool mail/dkim-show <domain> [selector] [--bind]\n' >&2
         return 2
     fi
     section "DKIM record for ${d}"
-    _dkim_show_one "$d" "$sel"
+    _dkim_show_one "$d" "$sel" "$bind_mode"
 }

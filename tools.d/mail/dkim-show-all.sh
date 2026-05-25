@@ -18,11 +18,12 @@
 . "${PTBOX_ROOT}/tools.d/mail/dkim-show.sh"
 
 main() {
-    local show_all=0
+    local show_all=0 bind_mode=""
     local a
     for a in "$@"; do
         case "$a" in
             --all|-a) show_all=1 ;;
+            --bind)   bind_mode="--bind" ;;
             *) printf 'unknown arg: %s\n' "$a" >&2; return 2 ;;
         esac
     done
@@ -49,7 +50,7 @@ main() {
             (( ++skipped ))
             continue
         fi
-        _dkim_show_one "$d" "$sel" || true
+        _dkim_show_one "$d" "$sel" "$bind_mode" || true
         (( ++problems ))
     done
 

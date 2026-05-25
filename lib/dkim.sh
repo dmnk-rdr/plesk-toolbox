@@ -102,6 +102,31 @@ dkim_chunks() {
     done
 }
 
+# dkim_print_publish_block <name> <value> [--bind]
+# Renders the "publish this TXT" block in a copy-paste friendly form. The
+# value sits on its own line (no leading whitespace, no quotes) so a
+# triple-click selects exactly what goes into the DNS provider's UI.
+# With --bind, also prints the 255-char-chunked BIND zone-file form.
+dkim_print_publish_block() {
+    local name="$1" value="$2" mode="${3:-}"
+    local rule="────────────────────────────────────────────────────────────────────"
+    printf '\n  Publish this DNS record:\n'
+    printf '    %sname%s  %s\n' "${C_DIM:-}" "${C_RST:-}" "$name"
+    printf '    %stype%s  TXT\n' "${C_DIM:-}" "${C_RST:-}"
+    printf '    %svalue%s (copy the line below, single string):\n' "${C_DIM:-}" "${C_RST:-}"
+    printf '  %s%s%s\n' "${C_DIM:-}" "$rule" "${C_RST:-}"
+    printf '%s\n' "$value"
+    printf '  %s%s%s\n' "${C_DIM:-}" "$rule" "${C_RST:-}"
+
+    if [[ "$mode" == "--bind" ]] && (( ${#value} > 255 )); then
+        printf '\n  %sBIND zone-file form (255-char chunks):%s\n' "${C_DIM:-}" "${C_RST:-}"
+        local chunk
+        while IFS= read -r chunk; do
+            printf '    %s\n' "$chunk"
+        done < <(dkim_chunks "$value")
+    fi
+}
+
 # dkim_status <local-keyfile> <selector> <domain>
 # Classifies the DKIM state for one (domain, selector) pair. Echoes one of:
 #   missing-key | no-dns | revoked | stale | weak | testing | ok

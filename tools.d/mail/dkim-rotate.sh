@@ -33,24 +33,15 @@
 : "${DKIM_KEY_MODE:=640}"
 
 _rotate_print_record() {
-    local keyfile="$1" sel="$2" d="$3"
+    local keyfile="$1" sel="$2" d="$3" bind_mode="${4:-}"
     local value name
     value="$(dkim_record_value "$keyfile")"
     name="$(dkim_record_name "$sel" "$d")"
-    printf '  %srecord%s  %s\n' "${C_DIM:-}" "${C_RST:-}" "$name"
-    printf '  %stype%s    TXT\n' "${C_DIM:-}" "${C_RST:-}"
-    printf '  %svalue%s   %s\n' "${C_DIM:-}" "${C_RST:-}" "$value"
-    if (( ${#value} > 255 )); then
-        printf '  %schunked (BIND-style):%s\n' "${C_DIM:-}" "${C_RST:-}"
-        local chunk
-        while IFS= read -r chunk; do
-            printf '            %s\n' "$chunk"
-        done < <(dkim_chunks "$value")
-    fi
+    dkim_print_publish_block "$name" "$value" "$bind_mode"
 }
 
 _rotate_stage() {
-    local d="$1" bits="$2" force="$3" sel keyfile staged
+    local d="$1" bits="$2" force="$3" bind_mode="$4" sel keyfile staged
     keyfile="$(dkim_keyfile "$d")"
     sel="$(dkim_selector_for_keyfile "$keyfile")"
     staged="${keyfile}.new"
@@ -63,7 +54,9 @@ _rotate_stage() {
     if [[ -e "$staged" && "$force" -ne 1 ]]; then
         printf '  staged key already exists: %s\n' "$staged"
         printf '  re-use it with --activate, or pass --force to regenerate\n'
-        _rotate_print_record "$staged" "$sel" "$d"
+        _rotate_print_record "$staged" "$sel" "$d" "$bind_mode"
+        printf '\n  Once the record is live in DNS, finish with:\n'
+        printf '    plesk-tool mail/dkim-rotate %s --activate\n' "$d"
         return 0
     fi
 
@@ -84,9 +77,9 @@ _rotate_stage() {
 
     [[ "$DRY_RUN" -eq 1 ]] && return 0
 
-    printf '\n  %sstaged new key — publish this TXT in DNS, then run --activate:%s\n' \
-        "${C_BOLD:-}" "${C_RST:-}"
-    _rotate_print_record "$staged" "$sel" "$d"
+    _rotate_print_record "$staged" "$sel" "$d" "$bind_mode"
+    printf '\n  Once the record is live in DNS, finish with:\n'
+    printf '    plesk-tool mail/dkim-rotate %s --activate\n' "$d"
 }
 
 _rotate_activate() {
@@ -154,12 +147,13 @@ _rotate_discard() {
 }
 
 main() {
-    local d="" mode="stage" bits=2048 force=0
+    local d="" mode="stage" bits=2048 force=0 bind_mode=""
     while (( $# )); do
         case "$1" in
             --activate) mode="activate" ;;
             --discard)  mode="discard" ;;
             --force)    force=1 ;;
+            --bind)     bind_mode="--bind" ;;
             --bits)     bits="$2"; shift ;;
             --bits=*)   bits="${1#--bits=}" ;;
             -*)         printf 'unknown flag: %s\n' "$1" >&2; return 2 ;;
@@ -171,13 +165,13 @@ main() {
         shift
     done
     if [[ -z "$d" ]]; then
-        printf 'usage: plesk-tool mail/dkim-rotate <domain> [--activate|--discard] [--bits N] [--force]\n' >&2
+        printf 'usage: plesk-tool mail/dkim-rotate <domain> [--activate|--discard] [--bits N] [--force] [--bind]\n' >&2
         return 2
     fi
 
     tool_begin "dkim-rotate:${d}:${mode}" "DKIM rotation (${mode}) for ${d}" || return 1
     case "$mode" in
-        stage)    _rotate_stage    "$d" "$bits" "$force" ;;
+        stage)    _rotate_stage    "$d" "$bits" "$force" "$bind_mode" ;;
         activate) _rotate_activate "$d" ;;
         discard)  _rotate_discard  "$d" ;;
     esac

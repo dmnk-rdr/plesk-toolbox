@@ -116,6 +116,27 @@ _plesk_sieve_path() {
     printf '/var/qmail/mailnames/%s/%s/sieve/.dovecot.sieve\n' "$d" "$user"
 }
 
+# Path to a mailbox's .qmail control file (qmail layout used by Plesk).
+_plesk_qmail_path() {
+    local d="$1" user="$2"
+    printf '/var/qmail/mailnames/%s/%s/.qmail\n' "$d" "$user"
+}
+
+# Mailgroup forward addresses configured in Plesk DB for a mailbox.
+# One address per line; empty output = no forwards configured.
+_plesk_mail_forwards() {
+    local d="$1" user="$2"
+    _plesk_available || return 1
+    plesk db -Ne "
+        SELECT mr.address
+          FROM mail_redir mr
+          JOIN mail m      ON m.id = mr.mn_id
+          JOIN domains dm  ON dm.id = m.dom_id
+         WHERE dm.name = '${d//\'/\'\'}'
+           AND m.mail_name = '${user//\'/\'\'}'
+         ORDER BY mr.address;" 2>/dev/null
+}
+
 # All IPs Plesk knows about — authoritative source for "this server's IPs".
 # Cached. Output: one IP per line (both v4 and v6).
 _PLESK_SERVER_IPS_CACHE=""

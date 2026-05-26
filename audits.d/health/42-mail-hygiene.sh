@@ -318,20 +318,45 @@ _grade_mailboxes() {
         return
     fi
 
-    local u sieve owner bad_inbox=() bad_owner=()
+    local u sieve owner qmail fwd missing
+    local bad_inbox=() bad_owner=() bad_fwd=()
     for u in "${boxes[@]}"; do
         sieve="$(_plesk_sieve_path "$d" "$u")"
-        [[ -r "$sieve" ]] || continue
-        if grep -qE 'fileinto[[:space:]]+"INBOX"' "$sieve" 2>/dev/null; then
-            bad_inbox+=("$u")
+        if [[ -r "$sieve" ]]; then
+            if grep -qE 'fileinto[[:space:]]+"INBOX"' "$sieve" 2>/dev/null; then
+                bad_inbox+=("$u")
+            fi
+            owner="$(stat -c '%U:%G' "$sieve" 2>/dev/null || echo "")"
+            if [[ -n "$owner" && "$owner" != "popuser:popuser" ]]; then
+                bad_owner+=("${u}(${owner})")
+            fi
         fi
-        owner="$(stat -c '%U:%G' "$sieve" 2>/dev/null || echo "")"
-        if [[ -n "$owner" && "$owner" != "popuser:popuser" ]]; then
-            bad_owner+=("${u}(${owner})")
+
+        # Mailgroup-forward consistency: every DB forward must appear as
+        # &addr in the mailbox's .qmail file. Drift = mail goes only to the
+        # local mailbox, forward silently broken (seen in the wild after
+        # Plesk/Dovecot upgrades).
+        mapfile -t fwd < <(_plesk_mail_forwards "$d" "$u" 2>/dev/null || true)
+        (( ${#fwd[@]} > 0 )) || continue
+        qmail="$(_plesk_qmail_path "$d" "$u")"
+        if [[ ! -r "$qmail" ]]; then
+            bad_fwd+=("${u}(no .qmail)")
+            continue
+        fi
+        missing=()
+        for a in "${fwd[@]}"; do
+            grep -qxF "&${a}" "$qmail" 2>/dev/null || missing+=("$a")
+        done
+        if (( ${#missing[@]} > 0 )); then
+            bad_fwd+=("${u}→${missing[*]}")
         fi
     done
 
-    if (( ${#bad_inbox[@]} > 0 )); then
+    if (( ${#bad_fwd[@]} > 0 )); then
+        MBX_STATUS="fail"; MBX_SEV="high"
+        MBX_CELL="$(status_cell fail "${MBX_COUNT}")"
+        MBX_FIX="mailgroup forward in DB but missing in .qmail for ${#bad_fwd[@]} mailbox(es): ${bad_fwd[*]} — fix with: plesk bin mail --update <addr> -mailbox false && plesk bin mail --update <addr> -mailbox true"
+    elif (( ${#bad_inbox[@]} > 0 )); then
         MBX_STATUS="warn"; MBX_SEV="medium"
         MBX_CELL="$(status_cell warn "${MBX_COUNT}")"
         MBX_FIX="sieve fileinto \"INBOX\" bug in ${#bad_inbox[@]} mailbox(es): ${bad_inbox[*]} — change to \"INBOX.Spam\""

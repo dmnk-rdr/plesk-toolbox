@@ -88,6 +88,24 @@
 # for every tool_confirm() prompt even on a TTY.
 # TOOL_CONFIRM_DEFAULT=1
 
+# ─── Tool: dns/ensure-mail (AutoDNS / SchlundTech JSON API) ─────────────
+# Credentials do NOT belong here — put them in a root-only secrets file
+# (default /etc/plesk-toolbox.secrets, chmod 600, see secrets example):
+#     AUTODNS_USER="account"
+#     AUTODNS_PASSWORD="secret"
+#     AUTODNS_CONTEXT=10                  # 4 = AutoDNS, 10 = SchlundTech
+# AUTODNS_SECRETS=/etc/plesk-toolbox.secrets
+# AUTODNS_URL=https://api.autodns.com/v1
+# TTL for records created by dns/ensure-mail (seconds)
+# DNS_ENSURE_TTL=3600
+# Desired records when missing ({domain} is replaced per domain)
+# DNS_ENSURE_SPF="v=spf1 +a +mx -all"
+# DNS_ENSURE_DMARC="v=DMARC1; p=quarantine; rua=mailto:postmaster@{domain}"
+# Toggle optional record groups (1 = manage, 0 = leave alone)
+# DNS_ENSURE_TLSRPT=1
+# DNS_ENSURE_MTA_STS=1                    # TXT only once the policy file is served
+# DNS_ENSURE_AUTOCONFIG=1
+
 # ─── MOTD mod ───────────────────────────────────────────────────────────
 # MOTD_BRAND="Acme Hosting · Managed Server"
 # MOTD_SERVICES=(nginx apache2 mariadb postfix dovecot fail2ban sw-cp-server psa)

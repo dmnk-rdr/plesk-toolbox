@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # audits.d/sec/57-mail-dane.sh — DANE / TLSA records for mail ports
 #
 # DANE (RFC 6698/7672) lets sending MTAs verify the receiving server's
@@ -81,8 +82,12 @@ _dane_parse_301() {
     local line="$1"
     # Collapse whitespace, strip optional trailing ".
     line="$(tr -s ' \t' ' ' <<< "$line" | sed 's/^ //;s/ $//')"
-    [[ "$line" =~ ^3[[:space:]]+0[[:space:]]+1[[:space:]]+([0-9a-fA-F]{64})$ ]] || return 1
-    printf '%s' "${BASH_REMATCH[1],,}"
+    [[ "$line" =~ ^3[[:space:]]+0[[:space:]]+1[[:space:]]+(.+)$ ]] || return 1
+    # dig wraps long digests into space-separated chunks
+    # ("46DC…498F 0879ED55") — join before validating.
+    local hex="${BASH_REMATCH[1]//[\" ]/}"
+    [[ "$hex" =~ ^[0-9a-fA-F]{64}$ ]] || return 1
+    printf '%s' "${hex,,}"
 }
 
 read -ra DANE_PORTS_ARR <<< "$MAIL_DANE_PORTS"

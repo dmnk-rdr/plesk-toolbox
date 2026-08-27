@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# plesk-audit-notify — faehrt die Audits und meldet per Mail, WENN etwas nicht stimmt.
+# plesk-audit-notify — run the audits and mail out ONLY when something is wrong.
 #
-# Warum es das gibt: Am 23.08.2026 war DANE auf einer Domain vier Wochen lang kaputt.
-# Der Check dafuer existierte und war korrekt — er wurde nur nie ausgefuehrt.
-# Ein Werkzeug, das niemand aufruft, ist kein Fix.
+# Why this exists: an audit that only runs by hand eventually stops running,
+# and a finding can sit unnoticed for weeks even though the check for it exists
+# and is correct. A tool nobody invokes is not a fix.
 #
-# Meldelogik (gegen zwei Fehlerarten zugleich):
-#   - Es wird gemeldet, wenn sich die Befundlage AENDERT (neu/behoben).
-#   - Und zusaetzlich alle REMIND_DAYS Tage, solange etwas offen ist.
-#     Sonst gewoehnt man sich an eine taegliche Mail und liest sie nicht mehr.
-#   - Ist alles sauber und war es das vorher auch: KEINE Mail.
+# Notification logic, guarding against two failure modes at once:
+#   - Mail when the set of findings CHANGES (new or resolved).
+#   - Plus a reminder every REMIND_DAYS while anything is still open.
+#     Otherwise a daily mail becomes background noise and stops being read.
+#   - Clean now and clean before: NO mail.
 #
-# Aufruf:  plesk-audit-notify [--dry-run] [--force]
+# Usage:  plesk-audit-notify [--dry-run] [--force]
 set -uo pipefail
 
 MAILTO="${PTBOX_NOTIFY_MAILTO:-}"
@@ -22,23 +22,23 @@ for a in "$@"; do
     case "$a" in
         --dry-run) DRY=1 ;;
         --force)   FORCE=1 ;;
-        *) echo "unbekannte Option: $a" >&2; exit 2 ;;
+        *) echo "unknown option: $a" >&2; exit 2 ;;
     esac
 done
 
-# Empfaenger: explizit gesetzt, sonst Plesks Admin-Kontakt.
+# Recipient: explicit if set, otherwise Plesk's admin contact.
 if [[ -z "$MAILTO" ]]; then
     MAILTO="$(plesk db -Ne "SELECT val FROM misc WHERE param='admin_email';" 2>/dev/null | head -n1)"
 fi
-[[ -n "$MAILTO" ]] || { echo "kein Empfaenger (PTBOX_NOTIFY_MAILTO oder Plesk admin_email)" >&2; exit 1; }
+[[ -n "$MAILTO" ]] || { echo "no recipient (PTBOX_NOTIFY_MAILTO or Plesk admin_email)" >&2; exit 1; }
 
 HOST="$(hostname -f 2>/dev/null || hostname)"
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 
-# Beide Audits einsammeln.
-# ⚠️ Die Audits beenden mit Exit 1, SOBALD es Befunde gibt — das ist der Normalfall,
-# kein Ausfall. Deshalb wird NICHT der Exit-Code bewertet, sondern ob verwertbares
-# JSON herauskam. Ein Audit, das gar kein JSON liefert, ist selbst ein Befund.
+# Collect both audits.
+# The audits exit 1 as soon as there are findings — that is the normal case, not a
+# failure. So the exit code is NOT what we judge; we judge whether usable JSON came
+# out. An audit that produces no JSON at all is itself a finding.
 for kind in sec health; do
     case "$kind" in
         sec)    cmd=(plesk-sec-audit --json) ;;
@@ -52,14 +52,14 @@ try:
     data = json.load(open(path))
     items = data.get("results", data if isinstance(data, list) else [])
     if not items:
-        raise ValueError("keine Ergebnisse enthalten")
+        raise ValueError("no results present")
 except Exception as e:
-    print(f"AUDIT-FEHLER\t{kind}\thigh\t{kind}-Audit lieferte kein verwertbares Ergebnis: {e}")
+    print(f"AUDIT-ERROR\t{kind}\thigh\t{kind} audit produced no usable result: {e}")
     sys.exit(0)
 for it in items:
     st = (it.get("status") or "").lower()
     sev = (it.get("severity") or "").lower()
-    # Gemeldet wird: alles was fehlschlaegt, plus hohe Warnungen.
+    # Reported: everything failing, plus high-severity warnings.
     if st == "fail" or (st == "warn" and sev == "high"):
         msg = (it.get("message") or "").strip()
         fix = (it.get("fix") or "").strip()
@@ -80,45 +80,45 @@ if [[ -r "$STATE" ]]; then
 fi
 
 reason=""
-if (( FORCE )); then reason="erzwungen"
+if (( FORCE )); then reason="forced"
 elif [[ "$fingerprint" != "$prev_fp" ]]; then
-    if (( count > 0 )); then reason="Befundlage geaendert"
-    elif [[ -n "$prev_fp" ]]; then reason="alle Befunde behoben"; fi
+    if (( count > 0 )); then reason="findings changed"
+    elif [[ -n "$prev_fp" ]]; then reason="all findings resolved"; fi
 elif (( count > 0 )) && (( now - prev_sent >= REMIND_DAYS * 86400 )); then
-    reason="Erinnerung — seit ${REMIND_DAYS} Tagen unveraendert offen"
+    reason="reminder — unchanged and open for ${REMIND_DAYS} days"
 fi
 
 if [[ -z "$reason" ]]; then
-    echo "keine Meldung noetig (${count} Befund(e), unveraendert)"
+    echo "no notification needed (${count} finding(s), unchanged)"
     exit 0
 fi
 
-subject="[${HOST}] Audit: ${count} Befund(e) — ${reason}"
-(( count == 0 )) && subject="[${HOST}] Audit: alles sauber — ${reason}"
+subject="[${HOST}] Audit: ${count} finding(s) — ${reason}"
+(( count == 0 )) && subject="[${HOST}] Audit: all clear — ${reason}"
 
 {
     echo "Server:   $HOST"
-    echo "Zeit:     $(date '+%d.%m.%Y %H:%M:%S %Z')"
-    echo "Anlass:   $reason"
-    echo "Befunde:  $count"
+    echo "Time:     $(date '+%Y-%m-%d %H:%M:%S %Z')"
+    echo "Trigger:  $reason"
+    echo "Findings: $count"
     echo
     if (( count > 0 )); then
-        echo "── Was nicht stimmt ──"
+        echo "── What is wrong ──"
         while IFS=$'\t' read -r st id sev msg; do
             [[ -n "$id" ]] || continue
             printf '  [%-4s %-6s] %s\n           %s\n\n' "$st" "$sev" "$id" "$msg"
         done < "$tmp/findings.tsv"
     else
-        echo "Alle geprueften Punkte sind in Ordnung."
+        echo "Every checked item is in order."
     fi
-    echo "── Nachschauen ──"
-    echo "  plesk-sec-audit        (Sicherheit, inkl. DANE/TLSA, TLS, Header)"
-    echo "  plesk-audit health     (Dienste, Platte, Speicher, Mail-Hygiene)"
+    echo "── Where to look ──"
+    echo "  plesk-sec-audit        (security: DANE/TLSA, TLS, headers)"
+    echo "  plesk-audit health     (services, disk, memory, mail hygiene)"
 } > "$tmp/body.txt"
 
 if (( DRY )); then
-    echo "── DRY-RUN, wuerde senden an $MAILTO ──"
-    echo "Betreff: $subject"
+    echo "── DRY RUN, would send to $MAILTO ──"
+    echo "Subject: $subject"
     cat "$tmp/body.txt"
     exit 0
 fi
@@ -132,4 +132,4 @@ fi
 
 mkdir -p "$(dirname "$STATE")"
 printf '%s\n%s\n' "$fingerprint" "$now" > "$STATE"
-echo "gemeldet an $MAILTO ($count Befunde, $reason)"
+echo "notified $MAILTO ($count findings, $reason)"

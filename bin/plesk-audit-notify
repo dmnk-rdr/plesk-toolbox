@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# plesk-audit-notify — faehrt die Audits und meldet per Mail, WENN etwas nicht stimmt.
+#
+# Warum es das gibt: Am 23.08.2026 war DANE auf einer Domain vier Wochen lang kaputt.
+# Der Check dafuer existierte und war korrekt — er wurde nur nie ausgefuehrt.
+# Ein Werkzeug, das niemand aufruft, ist kein Fix.
+#
+# Meldelogik (gegen zwei Fehlerarten zugleich):
+#   - Es wird gemeldet, wenn sich die Befundlage AENDERT (neu/behoben).
+#   - Und zusaetzlich alle REMIND_DAYS Tage, solange etwas offen ist.
+#     Sonst gewoehnt man sich an eine taegliche Mail und liest sie nicht mehr.
+#   - Ist alles sauber und war es das vorher auch: KEINE Mail.
+#
+# Aufruf:  plesk-audit-notify [--dry-run] [--force]
+set -uo pipefail
+
+MAILTO="${PTBOX_NOTIFY_MAILTO:-}"
+REMIND_DAYS="${PTBOX_NOTIFY_REMIND_DAYS:-7}"
+STATE="${PTBOX_NOTIFY_STATE:-/var/lib/plesk-toolbox/audit-notify.state}"
+DRY=0; FORCE=0
+for a in "$@"; do
+    case "$a" in
+        --dry-run) DRY=1 ;;
+        --force)   FORCE=1 ;;
+        *) echo "unbekannte Option: $a" >&2; exit 2 ;;
+    esac
+done
+
+# Empfaenger: explizit gesetzt, sonst Plesks Admin-Kontakt.
+if [[ -z "$MAILTO" ]]; then
+    MAILTO="$(plesk db -Ne "SELECT val FROM misc WHERE param='admin_email';" 2>/dev/null | head -n1)"
+fi
+[[ -n "$MAILTO" ]] || { echo "kein Empfaenger (PTBOX_NOTIFY_MAILTO oder Plesk admin_email)" >&2; exit 1; }
+
+HOST="$(hostname -f 2>/dev/null || hostname)"
+tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+
+# Beide Audits einsammeln.
+# ⚠️ Die Audits beenden mit Exit 1, SOBALD es Befunde gibt — das ist der Normalfall,
+# kein Ausfall. Deshalb wird NICHT der Exit-Code bewertet, sondern ob verwertbares
+# JSON herauskam. Ein Audit, das gar kein JSON liefert, ist selbst ein Befund.
+for kind in sec health; do
+    case "$kind" in
+        sec)    cmd=(plesk-sec-audit --json) ;;
+        health) cmd=(plesk-audit health --json) ;;
+    esac
+    "${cmd[@]}" > "$tmp/$kind.json" 2>"$tmp/$kind.err" || true
+    python3 - "$tmp/$kind.json" "$kind" >> "$tmp/findings.tsv" <<'PY'
+import json, sys
+path, kind = sys.argv[1], sys.argv[2]
+try:
+    data = json.load(open(path))
+    items = data.get("results", data if isinstance(data, list) else [])
+    if not items:
+        raise ValueError("keine Ergebnisse enthalten")
+except Exception as e:
+    print(f"AUDIT-FEHLER\t{kind}\thigh\t{kind}-Audit lieferte kein verwertbares Ergebnis: {e}")
+    sys.exit(0)
+for it in items:
+    st = (it.get("status") or "").lower()
+    sev = (it.get("severity") or "").lower()
+    # Gemeldet wird: alles was fehlschlaegt, plus hohe Warnungen.
+    if st == "fail" or (st == "warn" and sev == "high"):
+        msg = (it.get("message") or "").strip()
+        fix = (it.get("fix") or "").strip()
+        print(f"{st.upper()}\t{it.get('id','?')}\t{sev}\t{msg}" + (f"  →  {fix}" if fix else ""))
+PY
+done
+touch "$tmp/findings.tsv"
+sort -o "$tmp/findings.tsv" "$tmp/findings.tsv"
+count=$(grep -c . "$tmp/findings.tsv" || true)
+now=$(date +%s)
+fingerprint=$(cut -f1,2 "$tmp/findings.tsv" | sha256sum | cut -d' ' -f1)
+
+prev_fp=""; prev_sent=0
+if [[ -r "$STATE" ]]; then
+    prev_fp="$(sed -n '1p' "$STATE")"
+    prev_sent="$(sed -n '2p' "$STATE")"
+    [[ "$prev_sent" =~ ^[0-9]+$ ]] || prev_sent=0
+fi
+
+reason=""
+if (( FORCE )); then reason="erzwungen"
+elif [[ "$fingerprint" != "$prev_fp" ]]; then
+    if (( count > 0 )); then reason="Befundlage geaendert"
+    elif [[ -n "$prev_fp" ]]; then reason="alle Befunde behoben"; fi
+elif (( count > 0 )) && (( now - prev_sent >= REMIND_DAYS * 86400 )); then
+    reason="Erinnerung — seit ${REMIND_DAYS} Tagen unveraendert offen"
+fi
+
+if [[ -z "$reason" ]]; then
+    echo "keine Meldung noetig (${count} Befund(e), unveraendert)"
+    exit 0
+fi
+
+subject="[${HOST}] Audit: ${count} Befund(e) — ${reason}"
+(( count == 0 )) && subject="[${HOST}] Audit: alles sauber — ${reason}"
+
+{
+    echo "Server:   $HOST"
+    echo "Zeit:     $(date '+%d.%m.%Y %H:%M:%S %Z')"
+    echo "Anlass:   $reason"
+    echo "Befunde:  $count"
+    echo
+    if (( count > 0 )); then
+        echo "── Was nicht stimmt ──"
+        while IFS=$'\t' read -r st id sev msg; do
+            [[ -n "$id" ]] || continue
+            printf '  [%-4s %-6s] %s\n           %s\n\n' "$st" "$sev" "$id" "$msg"
+        done < "$tmp/findings.tsv"
+    else
+        echo "Alle geprueften Punkte sind in Ordnung."
+    fi
+    echo "── Nachschauen ──"
+    echo "  plesk-sec-audit        (Sicherheit, inkl. DANE/TLSA, TLS, Header)"
+    echo "  plesk-audit health     (Dienste, Platte, Speicher, Mail-Hygiene)"
+} > "$tmp/body.txt"
+
+if (( DRY )); then
+    echo "── DRY-RUN, wuerde senden an $MAILTO ──"
+    echo "Betreff: $subject"
+    cat "$tmp/body.txt"
+    exit 0
+fi
+
+if command -v sendmail >/dev/null 2>&1; then
+    { printf 'To: %s\nSubject: %s\nContent-Type: text/plain; charset=UTF-8\n\n' "$MAILTO" "$subject"
+      cat "$tmp/body.txt"; } | sendmail -t
+else
+    mail -s "$subject" "$MAILTO" < "$tmp/body.txt"
+fi
+
+mkdir -p "$(dirname "$STATE")"
+printf '%s\n%s\n' "$fingerprint" "$now" > "$STATE"
+echo "gemeldet an $MAILTO ($count Befunde, $reason)"

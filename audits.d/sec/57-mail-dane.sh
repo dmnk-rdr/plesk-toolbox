@@ -8,10 +8,15 @@
 # certificate the server actually serves.
 #
 # Per port we publish:  _<port>._tcp.mail.<domain>   IN TLSA
-# Convention used by Plesk: "3 0 1 <sha256-of-DER-cert>"
-#   usage    = 3  (DANE-EE — match the end-entity cert directly)
-#   selector = 0  (Full Cert, not SPKI)
-#   matching = 1  (SHA-256)
+# Handles ALL common forms, not just the Plesk default:
+#   usage    3 (DANE-EE, leaf certificate) · 2 (DANE-TA, a CA from the chain)
+#   selector 0 (full certificate)          · 1 (SPKI, public key only)
+#   matching 1 (SHA-256)                   · 2 (SHA-512)
+#
+# DANE semantics: ONE published record matching is enough (RFC 7671). So each port
+# is judged on "at least one matches", not "all match". The dangerous state is a
+# port that publishes records of which NONE match — DANE-validating senders then
+# refuse delivery.
 #
 # Table columns:
 #   TLSA    how many of the expected per-port records are published (N/M)
@@ -57,37 +62,65 @@ _dane_starttls_for_port() {
     esac
 }
 
-# SHA-256 of the live server certificate in DER form (matches "3 0 1").
-# Sets DANE_CERT_HASH (lowercase hex) on success.
-_dane_cert_sha256() {
+# Fetch the full certificate chain and write it as PEM files into $DANE_CHAIN_DIR.
+# cert-00 = leaf, cert-01.. = CA levels.
+_dane_fetch_chain() {
     local host="$1" port="$2" starttls="$3"
     local starttls_opt=()
     [[ -n "$starttls" ]] && starttls_opt=(-starttls "$starttls")
-    DANE_CERT_HASH=""
-    local digest
-    digest="$(echo | timeout "$MAIL_DANE_CONNECT_TIMEOUT" openssl s_client \
+    DANE_CHAIN_DIR="$(mktemp -d)" || return 1
+    echo | timeout "$MAIL_DANE_CONNECT_TIMEOUT" openssl s_client \
         ${starttls_opt[@]+"${starttls_opt[@]}"} \
-        -connect "${host}:${port}" -servername "$host" 2>/dev/null \
-        | openssl x509 -outform DER 2>/dev/null \
-        | openssl dgst -sha256 -hex 2>/dev/null \
-        | awk '{print $NF}')" || return 1
-    [[ -z "$digest" || ${#digest} -ne 64 ]] && return 1
-    DANE_CERT_HASH="${digest,,}"
+        -connect "${host}:${port}" -servername "$host" -showcerts 2>/dev/null \
+        | sed -n '/BEGIN CERTIFICATE/,/END CERTIFICATE/p' > "$DANE_CHAIN_DIR/all.pem"
+    [[ -s "$DANE_CHAIN_DIR/all.pem" ]] || { rm -rf "$DANE_CHAIN_DIR"; DANE_CHAIN_DIR=""; return 1; }
+    ( cd "$DANE_CHAIN_DIR" && csplit -z -s -f cert- -b '%02d.pem' all.pem '/BEGIN CERTIFICATE/' '{*}' ) 2>/dev/null
+    [[ -s "$DANE_CHAIN_DIR/cert-00.pem" ]] || { rm -rf "$DANE_CHAIN_DIR"; DANE_CHAIN_DIR=""; return 1; }
     return 0
 }
 
-# Parse TLSA rdata into "usage selector match hex". Tolerates extra
-# whitespace and uppercase. Echoes nothing if not 3-0-1.
-_dane_parse_301() {
-    local line="$1"
-    # Collapse whitespace, strip optional trailing ".
-    line="$(tr -s ' \t' ' ' <<< "$line" | sed 's/^ //;s/ $//')"
-    [[ "$line" =~ ^3[[:space:]]+0[[:space:]]+1[[:space:]]+(.+)$ ]] || return 1
-    # dig wraps long digests into space-separated chunks
-    # ("46DC…498F 0879ED55") — join before validating.
-    local hex="${BASH_REMATCH[1]//[\" ]/}"
-    [[ "$hex" =~ ^[0-9a-fA-F]{64}$ ]] || return 1
-    printf '%s' "${hex,,}"
+# Hash one certificate per selector/matching. Echoes lowercase hex.
+_dane_hash_of() {
+    local pem="$1" selector="$2" matching="$3" alg
+    case "$matching" in 1) alg="-sha256" ;; 2) alg="-sha512" ;; *) return 1 ;; esac
+    if [[ "$selector" == "0" ]]; then
+        openssl x509 -in "$pem" -outform DER 2>/dev/null | openssl dgst $alg -hex 2>/dev/null | awk '{print tolower($NF)}'
+    elif [[ "$selector" == "1" ]]; then
+        openssl x509 -in "$pem" -noout -pubkey 2>/dev/null | openssl pkey -pubin -outform DER 2>/dev/null \
+            | openssl dgst $alg -hex 2>/dev/null | awk '{print tolower($NF)}'
+    else
+        return 1
+    fi
+}
+
+# Split TLSA rdata into the globals DANE_U/DANE_S/DANE_M/DANE_HEX.
+_dane_parse() {
+    local line
+    line="$(tr -s ' \t' ' ' <<< "$1" | sed 's/^ //;s/ $//')"
+    [[ "$line" =~ ^([0-3])[[:space:]]+([0-1])[[:space:]]+([0-2])[[:space:]]+(.+)$ ]] || return 1
+    DANE_U="${BASH_REMATCH[1]}"; DANE_S="${BASH_REMATCH[2]}"; DANE_M="${BASH_REMATCH[3]}"
+    # dig wraps long digests into chunks — strip whitespace and quotes.
+    DANE_HEX="${BASH_REMATCH[4]//[\" ]/}"
+    DANE_HEX="${DANE_HEX,,}"
+    [[ "$DANE_HEX" =~ ^[0-9a-f]+$ ]] || return 1
+    return 0
+}
+
+# Check whether ONE record matches the fetched chain.
+#   usage 3/1 -> leaf only (cert-00)   ·   usage 2/0 -> any CA level of the chain
+_dane_record_matches() {
+    local pem
+    if [[ "$DANE_U" == "3" || "$DANE_U" == "1" ]]; then
+        [[ -s "$DANE_CHAIN_DIR/cert-00.pem" ]] || return 1
+        [[ "$(_dane_hash_of "$DANE_CHAIN_DIR/cert-00.pem" "$DANE_S" "$DANE_M")" == "$DANE_HEX" ]] && return 0
+        return 1
+    fi
+    for pem in "$DANE_CHAIN_DIR"/cert-*.pem; do
+        [[ -s "$pem" ]] || continue
+        [[ "$pem" == *cert-00.pem ]] && continue
+        [[ "$(_dane_hash_of "$pem" "$DANE_S" "$DANE_M")" == "$DANE_HEX" ]] && return 0
+    done
+    return 1
 }
 
 read -ra DANE_PORTS_ARR <<< "$MAIL_DANE_PORTS"
@@ -116,22 +149,30 @@ for d in "${domains[@]}"; do
     unverifiable=()
 
     for port in "${DANE_PORTS_ARR[@]}"; do
-        raw="$(dig +short TLSA "_${port}._tcp.${host}" 2>/dev/null | head -n1)"
-        [[ -z "$raw" ]] && continue
+        mapfile -t rrs < <(dig +short TLSA "_${port}._tcp.${host}" 2>/dev/null | grep .)
+        (( ${#rrs[@]} > 0 )) || continue
 
         published=$((published + 1))
-        expected_hash="$(_dane_parse_301 "$raw")" || {
-            unverifiable+=("${port}:unsupported-tlsa")
-            continue
-        }
 
         starttls="$(_dane_starttls_for_port "$port")"
-        if ! _dane_cert_sha256 "$host" "$port" "$starttls"; then
+        if ! _dane_fetch_chain "$host" "$port" "$starttls"; then
             unverifiable+=("${port}:cert-unreachable")
             continue
         fi
 
-        if [[ "$expected_hash" == "$DANE_CERT_HASH" ]]; then
+        # RFC 7671: the port is fine as soon as ONE record matches.
+        port_ok=0; parsed_any=0
+        for rr in "${rrs[@]}"; do
+            [[ -n "$rr" ]] || continue
+            _dane_parse "$rr" || continue
+            parsed_any=1
+            if _dane_record_matches; then port_ok=1; break; fi
+        done
+        rm -rf "$DANE_CHAIN_DIR"; DANE_CHAIN_DIR=""
+
+        if (( parsed_any == 0 )); then
+            unverifiable+=("${port}:unparsable-tlsa")
+        elif (( port_ok == 1 )); then
             matched=$((matched + 1))
         else
             mismatched+=("${port}")
@@ -144,7 +185,7 @@ for d in "${domains[@]}"; do
             tlsa_cell="$(status_cell warn 'miss')"
             match_cell="—"
             status="warn"; sev="medium"
-            fix="publish TLSA \"3 0 1 <sha256>\" at _<port>._tcp.${host} for ports: ${MAIL_DANE_PORTS}"
+            fix="publish TLSA at _<port>._tcp.${host} for ports: ${MAIL_DANE_PORTS}"
         else
             tlsa_cell="$(status_cell skip 'opt')"
             match_cell="—"
@@ -167,7 +208,7 @@ for d in "${domains[@]}"; do
     if (( ${#mismatched[@]} > 0 )); then
         match_cell="$(status_cell fail "${matched}/${published}")"
         status="fail"; sev="high"
-        fix="TLSA record mismatch on port(s) $(IFS=,; printf '%s' "${mismatched[*]}") — regenerate after cert renewal"
+        fix="NO published TLSA record matches the served certificate on port $(IFS=,; printf '%s' "${mismatched[*]}") — DANE-validating senders cannot deliver. Recompute the digests after every certificate renewal."
     elif (( ${#unverifiable[@]} > 0 )); then
         # Could not reach server to verify — surface as warn.
         match_cell="$(status_cell warn "${matched}/${published}")"

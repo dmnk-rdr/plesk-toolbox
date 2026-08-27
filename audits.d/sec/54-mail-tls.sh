@@ -15,6 +15,14 @@ section "security: mail TLS"
 : "${MAIL_TLS_MAX_DOMAINS:=25}"
 : "${MAIL_TLS_PORTS:=25 465 587 993 995}"
 : "${MAIL_TLS_CONNECT_TIMEOUT:=5}"
+# Pacing, to stop this check from manufacturing its own failures.
+# Postfix rate-limits connections per client IP (smtpd_client_connection_rate_limit,
+# default 30 per anvil_rate_time_unit=60s). This check opens 3 SMTP ports times
+# N domains within seconds — past ~30 Postfix refuses, and the check reported its
+# own blockade as "TLS failed". The result was findings that flapped between runs.
+# So: pause briefly before every SMTP probe. Set to 0 if this host's IP is exempt
+# via smtpd_client_event_limit_exceptions (which grants NO relay rights).
+: "${MAIL_TLS_SMTP_PACE:=2}"
 : "${MAIL_DOMAIN_TRUNCATE:=22}"
 
 if ! _plesk_available; then
@@ -128,6 +136,10 @@ for d in "${domains[@]}"; do
         fi
 
         starttls="$(_starttls_for_port "$port")"
+        # SMTP ports: pace ourselves, or Postfix's rate limit kicks in (see above).
+        case "$port" in
+            25|465|587) [[ "$MAIL_TLS_SMTP_PACE" != "0" ]] && sleep "$MAIL_TLS_SMTP_PACE" ;;
+        esac
         if ! _probe_cert "$host" "$port" "$starttls"; then
             port_cells+=("$(status_cell fail)")
             port_statuses+=("fail"); port_sevs+=("high")

@@ -25,7 +25,7 @@ what it changed** (everything writes a JSONL audit log).
 
 - 🛡️ **Security audit** — SSH hardening, fail2ban, panel 2FA, exposed ports,
   TLS expiry on every domain, the 9 OWASP HTTP response headers (skipping
-  vhosts that still serve Plesk's "Domain Default page"), MTA-STS,
+  vhosts without a website: Plesk's "Domain Default page" or 403/404/410 on `/`), MTA-STS,
   mail-client autoconfig + autodiscover, webmail reachability …
 - 💚 **Health audit** — memory/disk pressure, critical services
   (auto-aliases `apache2`↔`httpd`/`mariadb`↔`mysql`), Plesk license expiry,
@@ -292,7 +292,7 @@ Legacy shims still work: `plesk-sec-audit`, `plesk-audit`.
 | `30-plesk-panel` | panel 2FA, panel cert, admin email |
 | `32-plesk-fail2ban` | service, jails, recent ban count |
 | `50-web-tls` | per-domain certificate expiry on :443 |
-| `52-web-security-headers` | per-domain HTTP response headers — HSTS, X-Frame-Options, X-Content-Type-Options, CSP, Referrer-Policy, Permissions-Policy, COOP, COEP, CORP. Auto-skips vhosts serving the Plesk "Domain Default page" placeholder (set `WEB_HEADERS_SKIP_DEFAULT_PAGE=0` to keep them) |
+| `52-web-security-headers` | per-domain HTTP response headers — HSTS, X-Frame-Options, X-Content-Type-Options, CSP, Referrer-Policy, Permissions-Policy, COOP, COEP, CORP. Auto-skips vhosts without a website — Plesk "Domain Default page" placeholder or 403/404/410 on `/` (set `WEB_HEADERS_SKIP_DEFAULT_PAGE=0` to keep them) |
 | `53-web-bot-allowlist` | official bot IP lists vs. nginx: (1) each snapshot file (`BOT_ALLOWLIST_PAIRS`, default `21-ts-chatgpt-user.conf` ← openai.com/chatgpt-user.json) still matches its source, (2) 0 × `444` since the last log rotation to a bot whose IP is in its OFFICIAL list (`BOT_LISTS`: OAI-SearchBot, ChatGPT-User, DuckDuckBot) — forged user agents don't count. An unreadable or empty list, an unreadable log or a bot line it cannot evaluate or a log in an unknown format is `warn`, never `pass`; every warn is `high` so `plesk-audit-notify` mails it. Selftest: `tests/53-web-bot-allowlist.selftest.sh` |
 | `54-mail-tls` | per mail-enabled domain: `mail.<d>` on 25/465/587/993/995 — reachability + cert expiry + hostname match |
 | `56-mail-mta-sts` | MTA-STS TXT + policy file (RFC 8461) + TLSRPT (RFC 8460) |

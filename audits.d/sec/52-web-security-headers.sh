@@ -23,8 +23,9 @@ section "security: web response headers"
 : "${WEB_HEADERS_HSTS_MIN_DAYS:=180}"        # warn under 6 months; the
                                               # RFC 6797 author guidance is ≥1y
 : "${WEB_DOMAIN_TRUNCATE:=22}"
-: "${WEB_HEADERS_SKIP_DEFAULT_PAGE:=1}"       # skip domains serving the Plesk
-                                              # "Domain Default page" placeholder
+: "${WEB_HEADERS_SKIP_DEFAULT_PAGE:=1}"       # skip domains without a website:
+                                              # Plesk "Domain Default page" or
+                                              # 403/404/410 on /
 
 if ! _plesk_available; then
     emit "sec.web.headers" "medium" "skip" "plesk CLI not available"
@@ -59,6 +60,14 @@ _fetch_body_snippet() {
         --connect-timeout "$WEB_HEADERS_TIMEOUT" \
         -A "plesk-toolbox audit (content check)" \
         "https://$1/" 2>/dev/null | head -c 8192
+}
+
+# Final HTTP status of / after redirects.
+_fetch_status() {
+    curl -s -o /dev/null -L -w '%{http_code}' --max-time "$WEB_HEADERS_TIMEOUT" \
+        --connect-timeout "$WEB_HEADERS_TIMEOUT" \
+        -A "plesk-toolbox audit (status check)" \
+        "https://$1/" 2>/dev/null
 }
 
 # Plesk's "Domain Default page" placeholder — no real site behind the vhost.
@@ -243,6 +252,18 @@ for d in "${domains[@]}"; do
     fi
 
     if (( WEB_HEADERS_SKIP_DEFAULT_PAGE == 1 )); then
+        # 403/404/410 on / means no website is published (mail-only domain, or
+        # the Plesk placeholder deliberately answered with 404) — nothing to
+        # protect. 401/429 stay graded: a password-protected staging site is
+        # still a site.
+        code="$(_fetch_status "$d")"
+        if [[ "$code" == 403 || "$code" == 404 || "$code" == 410 ]]; then
+            table_row "$label" \
+                "$(status_cell skip "$code")" "" "" "" "" "" "" "" ""
+            emit "sec.web.headers.${d}" "info" "skip" \
+                "${d}: HTTP ${code} on / (no website published)"
+            continue
+        fi
         if _is_plesk_default_page "$(_fetch_body_snippet "$d")"; then
             table_row "$label" \
                 "$(status_cell skip 'default')" "" "" "" "" "" "" "" ""
